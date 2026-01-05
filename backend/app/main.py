@@ -13,11 +13,6 @@ from transcript_processor import TranscriptProcessor
 import time
 import uuid
 from datetime import datetime
-import asyncio
-import aiohttp
-import aiofiles
-import tempfile
-from pathlib import Path
 
 # Load environment variables
 load_dotenv()
@@ -637,196 +632,132 @@ async def search_transcripts(request: SearchRequest):
         logger.error(f"Error searching transcripts: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============================================================================
-# Audio Processing Functions
-# ============================================================================
-
-async def convert_webm_to_wav(webm_file: Path) -> Path:
-    """
-    Convert browser-recorded audio to Whisper-compatible format.
-
-    Transforms WebM/Opus (browser MediaRecorder output) to WAV/PCM format
-    with Whisper's required specifications: 16kHz sample rate, stereo channels.
-    """
-    wav_file = webm_file.with_suffix('.wav')
-
-    cmd = [
-        'ffmpeg', '-y',
-        '-i', str(webm_file),
-        '-ar', '16000',      # Whisper's preferred sample rate
-        '-ac', '2',          # Stereo required for speaker diarization
-        '-f', 'wav',         # WAV container format
-        str(wav_file)
-    ]
-
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-
-    stdout, stderr = await process.communicate()
-
-    if process.returncode != 0:
-        error_msg = stderr.decode() if stderr else "Unknown error"
-        raise Exception(f"FFmpeg conversion failed: {error_msg}")
-
-    logger.debug(f"[Audio] Converted {webm_file.name} to WAV ({wav_file.stat().st_size} bytes)")
-    return wav_file
-
-
-async def transcribe_with_whisper(wav_file: Path) -> str:
-    """
-    Transcribe audio using Whisper server.
-
-    Sends WAV file to Whisper server via HTTP POST and returns the transcribed text.
-    Configured for auto language detection (supports multilingual and code-switching).
-    """
-    # Docker container connects to host machine's Whisper server
-    whisper_url = "http://host.docker.internal:8178/inference"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            # Read audio file
-            async with aiofiles.open(wav_file, 'rb') as f:
-                file_data = await f.read()
-
-            # Prepare multipart form data
-            form_data = aiohttp.FormData()
-            form_data.add_field(
-                'file',
-                file_data,
-                filename='audio.wav',
-                content_type='audio/wav'
-            )
-            # Detect Hindi language explicitly (supports Hindi/English code-switching)
-            form_data.add_field('language', 'hi')
-            # Keep original language - don't translate to English
-            form_data.add_field('translate', 'false')
-            # Output format in Romanized Hindi (Hinglish)
-            form_data.add_field('output', 'txt')
-
-            # Send to Whisper
-            async with session.post(whisper_url, data=form_data, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    transcript = result.get('text', '').strip()
-                    logger.info(f"[Whisper] Transcript: {transcript[:100]}...")
-                    return transcript
-                else:
-                    error_text = await response.text()
-                    logger.error(f"[Whisper] Error {response.status}: {error_text}")
-                    return ""
-
-    except asyncio.TimeoutError:
-        logger.error("[Whisper] Request timeout (>30s)")
-        return ""
-    except Exception as e:
-        logger.error(f"[Whisper] Error: {str(e)}", exc_info=True)
-        return ""
-
 
 # ============================================================================
-# WebSocket Endpoint for Browser Audio Streaming
+# Groq Streaming WebSocket Endpoint (New Real-Time Architecture)
 # ============================================================================
 
-@app.websocket("/ws/audio")
-async def websocket_audio_endpoint(websocket: WebSocket):
-    """
-    Real-time audio transcription WebSocket endpoint.
+from streaming_transcription import StreamingTranscriptionManager
 
-    Receives audio chunks from browser, processes them through ffmpeg and Whisper,
-    and returns live transcripts back to the client.
+# Global streaming managers (one per session)
+streaming_managers = {}
+
+@app.websocket("/ws/streaming-audio")
+async def websocket_streaming_audio(websocket: WebSocket):
+    """
+    Real-time streaming transcription with Groq Whisper Large v3.
+
+    NEW ARCHITECTURE (vs /ws/audio):
+    - Continuous PCM audio stream (not chunks)
+    - VAD (Voice Activity Detection)
+    - Rolling 2s buffer with 500ms slide
+    - Groq API (~0.5s latency)
+    - Partial (gray) + Final (black) transcripts
 
     Flow:
-    1. Browser connects and starts sending audio chunks (WebM format, 10s intervals)
-    2. Backend converts each chunk: WebM → WAV (ffmpeg)
-    3. WAV sent to Whisper server for transcription
-    4. Transcript returned to browser via WebSocket
-    5. Temporary files cleaned up after processing
+    1. Browser sends continuous PCM audio (16kHz, mono, 16-bit)
+    2. Backend uses VAD to detect speech vs silence
+    3. Rolling buffer accumulates 2s of audio
+    4. Every 500ms, send to Groq Whisper API
+    5. Return partial (updating) and final (locked) transcripts
     """
     await websocket.accept()
     session_id = str(uuid.uuid4())
-    temp_dir = Path(tempfile.gettempdir()) / f"audio_session_{session_id}"
-    temp_dir.mkdir(exist_ok=True)
 
-    logger.info(f"[WebSocket] New audio session connected: {session_id}")
+    # Get Groq API key
+    import os
+    from dotenv import load_dotenv
 
-    try:
-        # Send connection confirmation
+    # Try loading from /tmp/.env first, then environment
+    load_dotenv("/tmp/.env")
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if not groq_api_key:
+        logger.error("[Streaming] GROQ_API_KEY not found")
         await websocket.send_json({
-            "type": "connected",
-            "session_id": session_id,
-            "message": "WebSocket connection established",
+            "type": "error",
+            "message": "GROQ_API_KEY not configured. Please add it to backend/.env"
+        })
+        await websocket.close()
+        return
+
+    # Create streaming manager for this session
+    manager = StreamingTranscriptionManager(groq_api_key)
+    streaming_managers[session_id] = manager
+
+    logger.info(f"[Streaming] ✅ Session {session_id} started")
+
+    # Send connection confirmation
+    await websocket.send_json({
+        "type": "connected",
+        "session_id": session_id,
+        "message": "Groq streaming ready",
+        "timestamp": datetime.utcnow().isoformat()
+    })
+
+    # Define callbacks for partial and final transcripts
+    async def on_partial(data):
+        """Send partial (gray, updating) transcript to browser"""
+        await websocket.send_json({
+            "type": "partial",
+            "text": data["text"],
+            "confidence": data["confidence"],
+            "is_stable": data.get("is_stable", False),
             "timestamp": datetime.utcnow().isoformat()
         })
+        logger.debug(f"[Streaming] Partial: {data['text'][:50]}...")
 
+    async def on_final(data):
+        """Send final (black, locked) transcript to browser"""
+        response = {
+            "type": "final",
+            "text": data["text"],
+            "confidence": data["confidence"],
+            "reason": data.get("reason", "unknown"),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        # Include translation metadata if available
+        if data.get("original_text"):
+            response["original_text"] = data["original_text"]
+            response["translated"] = data.get("translated", False)
+
+        await websocket.send_json(response)
+
+        # Log with translation info
+        if data.get("translated"):
+            logger.info(f"[Streaming] Final (EN): {data['text'][:50]}... (HI: {data.get('original_text', '')[:30]}...)")
+        else:
+            logger.info(f"[Streaming] Final: {data['text'][:50]}... (reason: {data.get('reason')})")
+
+    try:
         chunk_count = 0
 
         while True:
-            # Receive complete audio file from browser (WebM/Opus)
-            # Frontend now sends complete files by stop/start MediaRecorder
+            # Receive PCM audio chunk (continuous stream)
             audio_chunk = await websocket.receive_bytes()
             chunk_count += 1
 
-            logger.info(
-                f"[WebSocket] Session {session_id}: Received chunk {chunk_count} "
-                f"({len(audio_chunk)} bytes)"
+            if chunk_count % 50 == 0:  # Log every 50 chunks (~5s)
+                stats = manager.get_stats()
+                logger.debug(
+                    f"[Streaming] Session {session_id}: "
+                    f"chunks={chunk_count}, transcriptions={stats['transcriptions']}, "
+                    f"speaking={stats['is_speaking']}"
+                )
+
+            # Process with VAD + Groq
+            await manager.process_audio_chunk(
+                audio_data=audio_chunk,
+                on_partial=on_partial,
+                on_final=on_final
             )
 
-            # Save complete WebM file
-            webm_file = temp_dir / f"chunk_{chunk_count}.webm"
-            async with aiofiles.open(webm_file, 'wb') as f:
-                await f.write(audio_chunk)
-
-            # Process the audio chunk
-            try:
-                # Convert WebM → WAV
-                logger.debug(f"[Audio] Converting chunk {chunk_count} to WAV...")
-                wav_file = await convert_webm_to_wav(webm_file)
-
-                # Send to Whisper for transcription
-                logger.debug(f"[Audio] Sending chunk {chunk_count} to Whisper...")
-                transcript = await transcribe_with_whisper(wav_file)
-
-                if transcript:
-                    # Send transcript back to browser
-                    await websocket.send_json({
-                        "type": "transcript",
-                        "text": transcript,
-                        "chunk_number": chunk_count,
-                        "session_id": session_id,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-                    logger.info(f"[WebSocket] Sent transcript for chunk {chunk_count}: {transcript[:50]}...")
-                else:
-                    logger.warning(f"[WebSocket] Empty transcript for chunk {chunk_count}")
-
-                # Clean up temporary files
-                # TEMP: Keep files for debugging
-                # webm_file.unlink(missing_ok=True)
-                # wav_file.unlink(missing_ok=True)
-                logger.debug(f"[DEBUG] Kept files: {webm_file}, {wav_file}")
-
-            except Exception as processing_error:
-                logger.error(
-                    f"[WebSocket] Error processing chunk {chunk_count}: {str(processing_error)}",
-                    exc_info=True
-                )
-                # Send error to client but continue processing
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Processing error: {str(processing_error)}",
-                    "chunk_number": chunk_count,
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-
     except WebSocketDisconnect:
-        logger.info(f"[WebSocket] Session {session_id} disconnected (client closed)")
+        logger.info(f"[Streaming] Session {session_id} disconnected by client")
 
     except Exception as e:
         logger.error(
-            f"[WebSocket] Error in session {session_id}: {str(e)}",
+            f"[Streaming] Error in session {session_id}: {str(e)}",
             exc_info=True
         )
         try:
@@ -836,20 +767,17 @@ async def websocket_audio_endpoint(websocket: WebSocket):
                 "timestamp": datetime.utcnow().isoformat()
             })
         except:
-            # Connection already closed
             pass
 
     finally:
-        # Clean up temporary directory
-        try:
-            import shutil
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir)
-                logger.debug(f"[WebSocket] Cleaned up temp directory for session {session_id}")
-        except Exception as cleanup_error:
-            logger.warning(f"[WebSocket] Failed to cleanup temp directory: {cleanup_error}")
+        # Cleanup
+        if session_id in streaming_managers:
+            manager = streaming_managers[session_id]
+            manager.cleanup()
+            del streaming_managers[session_id]
 
-        logger.info(f"[WebSocket] Session {session_id} cleaned up")
+        logger.info(f"[Streaming] Session {session_id} cleaned up")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -857,6 +785,12 @@ async def shutdown_event():
     logger.info("API shutting down, cleaning up resources")
     try:
         processor.cleanup()
+
+        # Cleanup all streaming managers
+        for session_id, manager in streaming_managers.items():
+            manager.cleanup()
+        streaming_managers.clear()
+
         logger.info("Successfully cleaned up resources")
     except Exception as e:
         logger.error(f"Error during cleanup: {str(e)}", exc_info=True)

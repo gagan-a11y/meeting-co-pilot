@@ -6,7 +6,142 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **This project is transitioning from Meetily (Tauri desktop app) to Meeting Co-Pilot (web-based collaborative meeting assistant).**
 
-**Current Status**: **Phase 1 Complete** - Refactoring to Web App (Tauri Removed). Ready for End-to-End Testing.
+**Current Status**: **Phase 1.5 Complete** - Real-Time Groq Streaming Transcription Integrated (Jan 5, 2026)
+
+---
+
+## Real-Time Streaming Transcription Architecture (Current)
+
+### Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│   Browser (Next.js Frontend)                                             │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  RecordingControls.tsx                                            │   │
+│  │  └── AudioStreamClient (WebSocket + AudioWorklet)                 │   │
+│  │       ├── getUserMedia() → 48kHz audio                            │   │
+│  │       ├── AudioWorklet → downsample to 16kHz PCM                  │   │
+│  │       └── WebSocket binary streaming (continuous)                 │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│       ↑ JSON (partial/final transcripts)  ↓ Binary PCM audio            │
+└───────┼───────────────────────────────────┼─────────────────────────────┘
+        │ WebSocket: /ws/streaming-audio    │
+        ↓                                   ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│   Backend (FastAPI + Python)                                             │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  StreamingTranscriptionManager                                    │   │
+│  │  ├── SimpleVAD (Voice Activity Detection, threshold=0.08)        │   │
+│  │  ├── RollingAudioBuffer (6s window, 5s slide = 1s overlap)       │   │
+│  │  └── Smart deduplication (_remove_overlap algorithm)             │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│       │                                                                  │
+│       ↓                                                                  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  GroqTranscriptionClient                                          │   │
+│  │  ├── Groq API (whisper-large-v3 model)                            │   │
+│  │  ├── Auto language detection (Hindi/English/Hinglish)            │   │
+│  │  └── No prompts (pure transcription to avoid prompt leakage)     │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│       │                                                                  │
+│       ↓                                                                  │
+│  ┌─────────┐  ┌──────────┐                                              │
+│  │ SQLite  │  │ Partial/ │                                              │
+│  │ Storage │  │ Final    │ → WebSocket JSON response to browser         │
+│  └─────────┘  └──────────┘                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+#### Frontend (`frontend/src/lib/audio-streaming/`)
+
+| File | Purpose |
+|------|---------|
+| `AudioStreamClient.ts` | Main client - manages WebSocket + AudioWorklet |
+| `audio-processor.worklet.js` | AudioWorklet - downsamples 48kHz → 16kHz with anti-aliasing |
+
+**Audio Pipeline**:
+1. `getUserMedia()` captures microphone at 48kHz
+2. AudioWorklet runs in separate thread for real-time processing
+3. Downsamples to 16kHz mono PCM with anti-aliasing filter
+4. Streams binary chunks via WebSocket (continuous, not chunked files)
+
+#### Backend (`backend/app/`)
+
+| File | Purpose |
+|------|---------|
+| `main.py` | FastAPI app, WebSocket endpoint `/ws/streaming-audio` |
+| `streaming_transcription.py` | Orchestrates VAD → Buffer → Groq → Partial/Final |
+| `groq_client.py` | Groq API integration for Whisper Large v3 |
+| `vad.py` | SimpleVAD - amplitude-based voice activity detection |
+| `rolling_buffer.py` | Sliding window buffer (6s window, 5s slide) |
+
+### Transcription Flow
+
+```
+1. Browser captures audio (48kHz)
+       ↓
+2. AudioWorklet downsamples (48kHz → 16kHz, anti-aliasing)
+       ↓
+3. WebSocket streams binary PCM to backend
+       ↓
+4. SimpleVAD checks if speech (threshold=0.08)
+       ↓ (if speech)
+5. RollingAudioBuffer accumulates (6s window, 5s slide)
+       ↓ (when slide interval reached)
+6. GroqTranscriptionClient sends to Groq API
+       ↓
+7. Smart deduplication removes overlapping words
+       ↓
+8. Partial/Final logic determines transcript state
+       ↓
+9. WebSocket sends JSON to browser
+       ↓
+10. UI displays transcript (partial=gray, final=black)
+```
+
+### Key Technical Decisions
+
+1. **Groq Whisper over Local Whisper**:
+   - Groq API provides faster processing (~1-2s latency)
+   - whisper-large-v3 model for best Hinglish support
+   - No GPU required on server
+
+2. **6s Window, 5s Slide (1s Overlap)**:
+   - More context for complete sentences
+   - 1s overlap catches boundary words
+   - Smart deduplication prevents repeated text
+
+3. **No Prompts in Transcription**:
+   - Prompts were leaking into transcription output
+   - Pure transcription mode with auto language detection
+   - Output is in original script (Devanagari for Hindi)
+
+4. **SimpleVAD over Silero**:
+   - Amplitude-based (fast, no ML overhead)
+   - Threshold 0.08 (not too sensitive)
+   - Can upgrade to Silero later if needed
+
+### Smart Deduplication Algorithm
+
+```python
+def _remove_overlap(self, new_text: str) -> str:
+    """
+    Remove overlapping text from new transcript.
+
+    Example:
+        last_final_text = "Hello how are you"
+        new_text = "are you doing today"
+        return = "doing today"  (removed "are you" overlap)
+    """
+    # Get last 10 words from final transcript
+    # Check if new text starts with any of those words
+    # Remove overlapping prefix
+```
+
+---
 
 ## Project Overview
 
@@ -57,18 +192,19 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Current Technology Stack
 
-### Backend (✅ Keep - Working)
-- **Framework**: FastAPI (Python)
+### Backend (✅ Complete - Real-Time Streaming)
+- **Framework**: FastAPI (Python 3.11+)
 - **Database**: SQLite (aiosqlite)
-- **Vector DB**: ChromaDB/LanceDB (already integrated)
-- **Transcription**: Whisper.cpp (local, GPU-accelerated)
-- **LLM**: Ollama (local) + Claude API (cloud fallback)
+- **Transcription**: Groq Whisper Large v3 API (cloud, low latency)
+- **Audio Processing**: SimpleVAD + RollingAudioBuffer
+- **LLM**: pydantic-ai (Claude, OpenAI, Groq, Ollama)
+- **WebSocket**: Real-time bidirectional audio/transcript streaming
 
-### Frontend (🔧 Needs Migration)
-- **Current**: Tauri 2.x (Rust) + Next.js 14 + React 18
-- **Target**: Pure Next.js 14 + React 18 (web-based)
-- **To Remove**: All Tauri/Rust code
-- **To Add**: Browser audio APIs, WebSocket real-time sync
+### Frontend (✅ Complete - Web Audio)
+- **Framework**: Next.js 14 + React 18 (pure web, no Tauri)
+- **Audio Capture**: Browser getUserMedia() + AudioWorklet
+- **Streaming**: WebSocket binary streaming to backend
+- **State**: React hooks + context for recording state
 
 ## Essential Development Commands
 
@@ -218,35 +354,29 @@ pnpm run dev        # ✅ Use this - runs Next.js at http://localhost:3118
 - **State Management**: Add session/participant tracking
 - **Q&A**: Single-user → Private per-participant
 
-### ❌ REMOVE (Desktop-Specific)
-- **All Rust Code**: `frontend/src-tauri/` directory
-- **Tauri Dependencies**: package.json, Cargo.toml
-- **Desktop Build Scripts**: clean_run.sh, etc.
-- **Platform-Specific**: Audio device platform code (Windows/macOS/Linux)
+### ✅ REMOVED (Cleanup Complete)
+- **All Rust Code**: `frontend/src-tauri/` - DELETED
+- **Tauri Dependencies**: Removed from package.json
+- **Batch Processing**: Old `/ws/audio` endpoint removed from backend
+- **Test Pages**: `test-audio/` and `test-streaming/` removed
+- **Old Audio Library**: `frontend/src/lib/audio-web/` removed
 
 ## Key Files Reference
 
-### Backend (✅ Keep - No Changes Needed)
-- `backend/app/main.py` - FastAPI app, API endpoints
+### Backend (✅ Complete)
+- `backend/app/main.py` - FastAPI app, WebSocket `/ws/streaming-audio`
+- `backend/app/streaming_transcription.py` - StreamingTranscriptionManager
+- `backend/app/groq_client.py` - Groq Whisper API client
+- `backend/app/vad.py` - Voice Activity Detection
+- `backend/app/rolling_buffer.py` - Sliding window audio buffer
 - `backend/app/db.py` - Database operations
 - `backend/app/summarization.py` - LLM summarization
-- `backend/app/vectordb.py` - Embedding storage
 
-### Frontend (🔧 Needs Migration)
-**To Remove**:
-- `frontend/src-tauri/` - Entire Rust codebase
-- `frontend/src/hooks/usePermissionCheck.ts` - Uses Tauri APIs
-- All `invoke()` and `listen()` calls from `@tauri-apps/api`
-
-**To Modify**:
+### Frontend (✅ Complete - Pure Web)
 - `frontend/src/app/page.tsx` - Main recording interface
-- `frontend/src/components/Sidebar/SidebarProvider.tsx` - Add session state
-- `frontend/src/hooks/` - Replace Tauri hooks with web APIs
-
-**To Add (New)**:
-- `frontend/src/lib/websocket.ts` - WebSocket client
-- `frontend/src/lib/audio.ts` - Browser audio capture
-- `frontend/src/contexts/SessionContext.tsx` - Multi-user session state
+- `frontend/src/components/RecordingControls.tsx` - Streaming audio recording
+- `frontend/src/lib/audio-streaming/AudioStreamClient.ts` - WebSocket + AudioWorklet client
+- `frontend/public/audio-processor.worklet.js` - Real-time audio downsampling
 
 ## Common Development Tasks (During Migration)
 
@@ -344,33 +474,23 @@ pnpm run dev
 ### Phase 0 Findings Summary
 
 **Backend Architecture** ✅:
-- **FastAPI**: Fully functional on port 5167, comprehensive HTTP endpoints
+- **FastAPI**: Fully functional on port 5167, WebSocket + HTTP endpoints
 - **Database**: SQLite with complete schema (meetings, transcripts, summary_processes, settings)
 - **LLM Integration**: Working with pydantic-ai (Claude, OpenAI, Groq, Ollama)
-- **Whisper Server**: Running on port 8178, accepts HTTP POST with WAV files
-- **Audio Flow**: Whisper receives WAV files via HTTP POST → returns transcript text
-- **VectorDB**: ❌ NOT IMPLEMENTED (ChromaDB mentioned in PRD but no code found)
+- **Transcription**: Groq Whisper Large v3 API (cloud, ~1-2s latency)
+- **Audio Flow**: Browser PCM → WebSocket → VAD → Buffer → Groq API → Transcript
 
-**Backend Gaps** ⚠️:
-1. **No WebSocket Support**: All endpoints are HTTP-only (needs implementation)
-2. **No Real-Time Streaming**: Current flow is batch-based (full WAV files, not chunks)
-3. **No Multi-User Sessions**: Database has no `sessions` or `participants` tables
-4. **No VectorDB**: No ChromaDB/LanceDB integration found (Phase 4 requirement)
+**Backend Status** (Updated Phase 1.5):
+1. ✅ **WebSocket Support**: `/ws/streaming-audio` for real-time transcription
+2. ✅ **Real-Time Streaming**: Continuous PCM → Groq Whisper API
+3. ⏳ **No Multi-User Sessions**: Skipped (Phase 2 deferred)
+4. ⏳ **No VectorDB**: Phase 4 requirement
 
-**Frontend Tauri Dependencies** ❌:
-- **Total Rust Files**: 100+ files in `frontend/src-tauri/` (ALL to be removed)
-- **Audio Capture**: Platform-specific code (Windows/macOS/Linux device detection)
-- **VAD**: Voice Activity Detection in Rust (can replace with browser AudioContext)
-- **Transcription Flow**: Rust → HTTP POST WAV → Whisper → Tauri events → React
-- **Critical Files**:
-  - `src-tauri/src/audio/transcription/whisper_provider.rs` - HTTP POST to Whisper
-  - `src/contexts/RecordingStateContext.tsx` - Uses `invoke()` and `listen()`
-  - `src/components/RecordingControls.tsx` - Tauri commands
-
-**Audio Format Challenge** 🚨:
-- **Current**: Rust captures audio → encodes to WAV/PCM → sends to Whisper
-- **Target**: Browser MediaRecorder → outputs WebM/Opus → needs conversion to WAV
-- **Solution**: Use ffmpeg in backend to convert WebM → WAV before Whisper
+**Frontend Status** ✅:
+- **Pure Web**: No Tauri, no Rust - just Next.js + React
+- **Audio Capture**: Browser getUserMedia() + AudioWorklet
+- **Streaming**: WebSocket binary streaming to backend
+- **Transcription Flow**: Browser → AudioWorklet → WebSocket → Groq → UI
 
 ## Day 4: Web Audio Integration ✅ COMPLETED (Jan 2, 2026)
 
@@ -468,47 +588,186 @@ End-to-end pipeline verified:
 
 ---
 
-## 🚀 Next: Day 5 - Remove Tauri (2-3 hours)
+## Phase 1.5: Real-Time Groq Streaming ✅ COMPLETED (Jan 5, 2026)
 
-### Tasks Remaining
+**Completion Date**: Jan 5, 2026
+**Status**: ✅ **FULLY INTEGRATED - Streaming transcription on main page**
 
-1. **Delete Tauri Codebase** (15 min)
-   - `rm -rf frontend/src-tauri/`
-   - Remove Cargo.toml, tauri.conf.json, etc.
+### What Changed from Day 4
 
-2. **Clean package.json** (10 min)
-   - Remove `@tauri-apps/*` dependencies
-   - Remove Tauri scripts
+Day 4 used **batch processing** (10s WebM chunks → ffmpeg → local Whisper). Phase 1.5 switched to **real-time streaming** (continuous PCM → Groq Whisper API).
 
-3. **Remove Feature Flag** (20 min)
-   - Delete `config.ts`
-   - Remove all `USE_WEB_AUDIO` conditionals
-   - Keep only web audio code
+| Aspect | Day 4 (Batch) | Phase 1.5 (Streaming) |
+|--------|---------------|----------------------|
+| Audio Format | WebM/Opus (10s chunks) | Raw PCM (continuous) |
+| Transcription | Local Whisper server | Groq Whisper API |
+| Latency | 2-3 seconds | 1-2 seconds |
+| WebSocket | `/ws/audio` | `/ws/streaming-audio` |
+| Frontend | MediaRecorder + stop/restart | AudioWorklet + continuous |
 
-4. **Clean Install** (5 min)
-   - `rm -rf node_modules && pnpm install`
+### New Components Built
 
-5. **Remove Tauri Imports** (30 min)
-   - Remove all `@tauri-apps/api` imports
-   - Fix TypeScript errors
+**Backend** (`backend/app/`):
+- ✅ `streaming_transcription.py` - StreamingTranscriptionManager class
+- ✅ `groq_client.py` - GroqTranscriptionClient for Whisper API
+- ✅ `vad.py` - SimpleVAD (amplitude-based voice detection)
+- ✅ `rolling_buffer.py` - RollingAudioBuffer (6s window, 5s slide)
+- ✅ New WebSocket endpoint `/ws/streaming-audio`
 
-6. **Testing** (30 min)
-   - End-to-end recording test
-   - Browser compatibility
-   - No console errors
+**Frontend** (`frontend/src/lib/audio-streaming/`):
+- ✅ `AudioStreamClient.ts` - Manages WebSocket + AudioWorklet
+- ✅ `audio-processor.worklet.js` - Real-time 48kHz → 16kHz downsampling
 
-7. **Documentation** (15 min)
-   - Update this file
-   - Create DAY5_COMPLETE.md
+### Integration with Main Page
 
-### Success Criteria for Day 5
-- ✅ No Tauri code remaining
-- ✅ App works without Tauri
-- ✅ Clean console (no Tauri errors)
-- ✅ All features still functional
+Updated `RecordingControls.tsx` to use streaming:
+- Replaced `WebAudioCapture` + `AudioWebSocketClient` with `AudioStreamClient`
+- Changed WebSocket from `/ws/audio` to `/ws/streaming-audio`
+- Uses `onPartial` and `onFinal` callbacks for live transcript updates
+
+### Key Technical Decisions
+
+1. **Groq API instead of local Whisper**:
+   - Faster (~1-2s latency vs 2-3s)
+   - `whisper-large-v3` model (best for Hinglish)
+   - No GPU required on server
+
+2. **No prompts in transcription**:
+   - Prompts were leaking into output
+   - Pure transcription with auto language detection
+   - Output in original script (Devanagari for Hindi)
+
+3. **6s window, 5s slide (1s overlap)**:
+   - More context for complete sentences
+   - Smart deduplication removes repeated words
+
+4. **AudioWorklet for downsampling**:
+   - Runs in separate thread (no main thread blocking)
+   - Anti-aliasing filter for quality
+   - Continuous streaming (no file boundaries)
+
+### Files Modified (Phase 1.5)
+- ✅ `backend/app/main.py` - Added `/ws/streaming-audio` endpoint
+- ✅ `backend/app/streaming_transcription.py` - NEW orchestrator
+- ✅ `backend/app/groq_client.py` - NEW Groq API client
+- ✅ `backend/app/vad.py` - NEW voice activity detection
+- ✅ `backend/app/rolling_buffer.py` - NEW sliding window buffer
+- ✅ `frontend/src/components/RecordingControls.tsx` - Switched to streaming
+- ✅ `frontend/src/lib/audio-streaming/AudioStreamClient.ts` - NEW streaming client
+- ✅ `frontend/public/audio-processor.worklet.js` - NEW AudioWorklet
+
+### Testing
+
+Access main page: `http://localhost:3118`
+
+End-to-end pipeline:
+- Browser mic → AudioWorklet → WebSocket → VAD → Buffer → Groq API → Dedup → UI
+
+---
+
+## Phase 2: Multi-Participant Sessions ⏸️ SKIPPED
+
+**Status**: ⏸️ **DEFERRED** - Not a priority for current use case
+
+Phase 2 (session URLs, participant joining, WebSocket rooms) is being skipped for now. The current focus is on single-user AI features that provide immediate value.
+
+**What's Skipped**:
+- FR1.2-FR1.5: Session URLs, participant joining, participant list
+- FR3.1-FR3.4: Multi-user real-time sync
+
+**Rationale**: Single-user transcription with AI features provides sufficient value for initial deployment. Multi-user can be added later if needed.
+
+---
+
+## 🚀 Next: Phase 3 - AI Features
+
+**Status**: 📋 **PLANNED** - Ready to implement
+**Estimated Effort**: 4-5 days
+
+### Phase 3 Goals (from PRD)
+
+Build AI-powered features that enhance meeting productivity:
+
+1. **"Catch Me Up"** - Participants who zone out can get a summary of what they missed
+2. **Real-Time Q&A** - Ask AI questions during meeting using transcript context
+3. **Decision/Action Extraction** - Automatically identify decisions and action items
+4. **Current Topic Display** - Show what's being discussed right now
+
+### Feature Breakdown
+
+#### 3.1 Catch Me Up (FR5)
+
+| ID | Requirement | Implementation |
+|----|-------------|----------------|
+| FR5.1 | Participant can request "Catch me up" | Add button in UI |
+| FR5.2 | Select time range (5/10/15 min) | Time range selector component |
+| FR5.3 | Generate summary of selected range | Use existing LLM summarization |
+| FR5.4 | Include key points, decisions, actions | Reuse summary prompts |
+| FR5.5 | Summary shown privately | Display in modal/sidebar |
+
+**Technical Approach**:
+- Add "Catch Me Up" button to meeting UI
+- Filter transcripts by time range (last N minutes)
+- Call existing `/process-transcript` endpoint with filtered text
+- Display summary in a modal or sidebar panel
+
+#### 3.2 Real-Time Q&A (FR7)
+
+| ID | Requirement | Implementation |
+|----|-------------|----------------|
+| FR7.1 | Ask AI questions during meeting | Chat input in sidebar |
+| FR7.2 | AI answers using current meeting context | Pass transcript to LLM |
+| FR7.3 | AI answers using past meeting context | VectorDB search (Phase 4) |
+| FR7.4 | Q&A is private to asking participant | Single-user, no broadcast needed |
+
+**Technical Approach**:
+- Add Q&A input field to meeting UI
+- Create new endpoint `/ask-question`
+- Pass current transcript + question to LLM
+- Stream response back to UI
+
+#### 3.3 Decision/Action Extraction (FR4)
+
+| ID | Requirement | Implementation |
+|----|-------------|----------------|
+| FR4.1 | Identify decisions from transcript | ✅ Already exists |
+| FR4.2 | Extract action items | ✅ Already exists |
+| FR4.4 | Current discussion topic | Real-time topic extraction |
+| FR4.5 | Items update as meeting progresses | Periodic re-extraction during recording |
+
+**Technical Approach**:
+- Existing summarization already extracts decisions/actions
+- Add periodic extraction during recording (every 2-3 minutes)
+- Display in sidebar panel
+- Add "Current Topic" component
+
+### Implementation Tasks
+
+1. **UI Components**
+   - [ ] "Catch Me Up" button + time selector modal
+   - [ ] Q&A chat input in sidebar
+   - [ ] Decisions/Actions panel in sidebar
+   - [ ] Current Topic display
+
+2. **Backend Endpoints**
+   - [ ] `POST /catch-me-up` - Generate time-range summary
+   - [ ] `POST /ask-question` - Q&A with transcript context
+   - [ ] `POST /extract-items` - Real-time decision/action extraction
+
+3. **Integration**
+   - [ ] Wire up UI to new endpoints
+   - [ ] Add periodic extraction during recording
+   - [ ] Handle loading states and errors
+
+### Success Criteria for Phase 3
+
+- [ ] "Catch Me Up" generates summary for selected time range
+- [ ] Q&A answers questions using current transcript
+- [ ] Decisions and actions display in sidebar during recording
+- [ ] Current topic updates as discussion progresses
 
 ---
 
 **Full implementation details**: `/DAY4_COMPLETE.md`
 
-**This file auto-updates as we progress through phases. Last updated: Day 4 Complete - Jan 2, 2026 16:50 UTC**
+**This file auto-updates as we progress through phases. Last updated: Phase 1.5 Complete - Jan 5, 2026**

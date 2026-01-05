@@ -1,13 +1,12 @@
 'use client';
 
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { Square, Mic, AlertCircle, X } from 'lucide-react';
 import { SummaryResponse } from '@/types/summary';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Analytics from '@/lib/analytics';
-import { WebAudioCapture } from '@/lib/audio-web/capture';
-import { AudioWebSocketClient } from '@/lib/audio-web/websocket-client';
+import { AudioStreamClient } from '@/lib/audio-streaming/AudioStreamClient';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -42,9 +41,8 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const [isStopping, setIsStopping] = useState(false);
   const [deviceError, setDeviceError] = useState<{ title: string, message: string } | null>(null);
 
-  // Web audio state
-  const [audioCapture, setAudioCapture] = useState<WebAudioCapture | null>(null);
-  const [ws, setWs] = useState<AudioWebSocketClient | null>(null);
+  // Real-time streaming audio client
+  const audioClientRef = useRef<AudioStreamClient | null>(null);
 
   // Debug: Log when component mounts
   useEffect(() => {
@@ -62,71 +60,60 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       return;
     }
 
-    console.log('🎙️ [RecordingControlsWeb] Starting web audio recording...');
-    console.log('🎙️ [RecordingControlsWeb] Button click detected');
+    console.log('🎙️ [RecordingControls] Starting real-time streaming transcription...');
     setIsStarting(true);
     setDeviceError(null);
 
     try {
-      // Initialize browser audio capture
-      const capture = new WebAudioCapture();
-      await capture.initialize();
-      console.log('✅ Browser audio capture initialized');
+      // Create new streaming audio client (uses Groq Whisper)
+      const client = new AudioStreamClient('ws://localhost:5167/ws/streaming-audio');
+      audioClientRef.current = client;
 
-      // Connect to backend WebSocket
-      const websocket = new AudioWebSocketClient('ws://localhost:5167/ws/audio');
-      await websocket.connect();
-      console.log('✅ WebSocket connected');
+      await client.start({
+        onConnected: (sessionId) => {
+          console.log('✅ Connected to streaming service, session:', sessionId);
+        },
 
-      // Set up audio data callback to stream chunks to backend
-      capture.onData((blob: Blob) => {
-        console.log('🎵 Audio chunk received:', blob.size, 'bytes');
-        websocket.sendAudio(blob);
-      });
+        onPartial: (text, confidence, isStable) => {
+          // Partial transcripts (gray, updating) - optional to show
+          console.log('[Partial]', text.substring(0, 50) + '...', `(stable: ${isStable})`);
+        },
 
-      // Handle errors
-      capture.onError((error: Error) => {
-        console.error('❌ Audio capture error:', error);
-        onTranscriptionError?.(error.message);
-      });
+        onFinal: (text, confidence, reason) => {
+          // Final transcripts (black, locked) - main content
+          console.log('📝 [RecordingControls] Final transcript:', text.substring(0, 50) + '...');
 
-      // Handle transcripts from backend
-      websocket.onTranscript((text: string) => {
-        console.log('📝 [RecordingControlsWeb] Transcript received from backend:', text.substring(0, 50) + '...');
-        console.log('📝 [RecordingControlsWeb] Full text length:', text.length);
+          const transcriptUpdate = {
+            text: text,
+            timestamp: new Date().toISOString(),
+            sequence_id: Date.now(),
+            is_partial: false,
+          };
 
-        // Pass transcript to parent component for display
-        const transcriptUpdate = {
-          text: text,
-          timestamp: new Date().toISOString(),
-          sequence_id: Date.now(),
-          is_partial: false,
-        };
+          if (onTranscriptReceived) {
+            onTranscriptReceived(transcriptUpdate as any);
+            console.log('✅ Transcript passed to parent component');
+          }
+        },
 
-        console.log('📝 [RecordingControlsWeb] Calling onTranscriptReceived with:', transcriptUpdate);
-        console.log('📝 [RecordingControlsWeb] onTranscriptReceived is defined?', !!onTranscriptReceived);
+        onError: (error) => {
+          console.error('❌ Streaming error:', error);
+          onTranscriptionError?.(error.message);
+        },
 
-        if (onTranscriptReceived) {
-          onTranscriptReceived(transcriptUpdate as any);
-          console.log('✅ [RecordingControlsWeb] onTranscriptReceived called successfully');
-        } else {
-          console.error('❌ [RecordingControlsWeb] onTranscriptReceived is undefined!');
+        onDisconnected: () => {
+          console.log('🔌 Streaming disconnected');
         }
       });
 
-      // Start recording with 10-second chunks
-      capture.startRecording(10000);
-      console.log('✅ Recording started with 10s chunks');
-
-      setAudioCapture(capture);
-      setWs(websocket);
+      console.log('✅ Real-time streaming started');
 
       // Notify parent component
       onRecordingStart();
 
-      Analytics.trackButtonClick('start_recording_web', 'recording_controls');
+      Analytics.trackButtonClick('start_recording_streaming', 'recording_controls');
     } catch (error) {
-      console.error('❌ Failed to start web audio recording:', error);
+      console.error('❌ Failed to start streaming transcription:', error);
 
       const errorMsg = error instanceof Error ? error.message : String(error);
 
@@ -156,7 +143,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     } finally {
       setIsStarting(false);
     }
-  }, [onRecordingStart, onTranscriptionError, isStarting]);
+  }, [onRecordingStart, onTranscriptionError, onTranscriptReceived, isStarting]);
 
   const handleStopRecording = useCallback(async () => {
     if (!isRecording || isStarting || isStopping) {
@@ -164,29 +151,28 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       return;
     }
 
-    console.log('🛑 Stopping recording...');
+    console.log('🛑 Stopping streaming transcription...');
 
     onStopInitiated?.();
     setIsStopping(true);
 
     try {
-      audioCapture?.stop();
-      console.log('✅ Audio capture stopped');
-
-      ws?.disconnect();
-      console.log('✅ WebSocket disconnected');
+      // Stop the streaming audio client
+      audioClientRef.current?.stop();
+      audioClientRef.current = null;
+      console.log('✅ Streaming stopped');
 
       setIsProcessing(false);
       onRecordingStop(true);
 
-      Analytics.trackButtonClick('stop_recording_web', 'recording_controls');
+      Analytics.trackButtonClick('stop_recording_streaming', 'recording_controls');
     } catch (error) {
-      console.error('❌ Failed to stop recording:', error);
+      console.error('❌ Failed to stop streaming:', error);
       onRecordingStop(false);
     } finally {
       setIsStopping(false);
     }
-  }, [isRecording, isStarting, isStopping, audioCapture, ws, onStopInitiated, onRecordingStop]);
+  }, [isRecording, isStarting, isStopping, onStopInitiated, onRecordingStop]);
 
   return (
     <TooltipProvider>

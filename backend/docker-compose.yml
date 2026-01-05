@@ -177,17 +177,18 @@ services:
     image: meetily-backend:latest
     container_name: meetily-backend
     restart: unless-stopped
-    
+
     # Port mapping
     ports:
       - "${APP_PORT:-5167}:5167"
-    
+
     # Environment variables
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
       - DATABASE_PATH=/app/data/meeting_minutes.db
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     
     # Add extra host for Docker Desktop compatibility
     extra_hosts:
