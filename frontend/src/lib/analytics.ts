@@ -61,10 +61,10 @@ export class Analytics {
   }
 
   static async getPersistentUserId(): Promise<string> {
-    let userId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('meetily_user_id') : null;
+    let userId = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('meeting_copilot_user_id') : null;
     if (!userId) {
       userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('meetily_user_id', userId);
+      if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('meeting_copilot_user_id', userId);
     }
     return userId;
   }

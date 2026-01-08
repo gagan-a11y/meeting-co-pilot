@@ -20,7 +20,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Analytics from '@/lib/analytics';
 import { showRecordingNotification } from '@/lib/recordingNotification';
 import { Button } from '@/components/ui/button';
-import { Copy, GlobeIcon, Settings } from 'lucide-react';
+import { Copy, GlobeIcon, Settings, Bot, Zap, X } from 'lucide-react';
+import { ChatInterface } from '@/components/MeetingDetails/ChatInterface';
 import { MicrophoneIcon } from '@heroicons/react/24/outline';
 import { toast } from 'sonner';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -100,7 +101,18 @@ export default function Home() {
   });
 
   // State for web audio recording
+  // State for web audio recording
   const [isRecording, setIsRecording] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
+  // Catch Me Up feature state
+  const [isCatchUpOpen, setIsCatchUpOpen] = useState(false);
+  const [catchUpSummary, setCatchUpSummary] = useState('');
+  const [isCatchUpLoading, setIsCatchUpLoading] = useState(false);
+  const [showCatchUpMenu, setShowCatchUpMenu] = useState(false);
+  const [catchUpMinutes, setCatchUpMinutes] = useState<number | null>(null); // null = all, number = last N minutes
+  const [customMinutesInput, setCustomMinutesInput] = useState('');
+
 
   // Permission check skipped as browser handles it
 
@@ -444,6 +456,10 @@ export default function Home() {
 
       console.log('✅ [Web Audio] Meeting saved with ID:', meetingId);
 
+      // Store transcript for LLM post-processing
+      const fullTranscript = freshTranscripts.map(t => t.text).join('\n');
+      setOriginalTranscript(fullTranscript);
+
       // Update UI
       await refetchMeetings();
       setCurrentMeeting({
@@ -451,23 +467,55 @@ export default function Home() {
         title: meetingTitle || 'Web Audio Meeting'
       });
 
-      toast.success('Recording saved successfully!', {
-        description: `${freshTranscripts.length} transcript segments saved.`,
-        action: {
-          label: 'View Meeting',
-          onClick: () => {
-            router.push(`/meeting-details?id=${meetingId}`);
-            Analytics.trackButtonClick('view_meeting_from_toast', 'recording_complete');
-          }
-        },
-        duration: 10000,
+      toast.success('Recording saved! Generating AI summary...', {
+        description: `${freshTranscripts.length} transcript segments saved. Extracting action items and decisions...`,
+        duration: 5000,
       });
+
+      // Automatically trigger LLM post-processing to extract action items and decisions
+      console.log('🤖 [AI] Starting automatic LLM post-processing...');
+      setSummaryStatus('summarizing');
+
+      try {
+        const processResponse = await fetch(`${serverAddress}/process-transcript`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: fullTranscript,
+            model: modelConfig.provider,
+            modelName: modelConfig.model,
+            chunkSize: 40000,
+            overlap: 1000,
+            customPrompt: 'Extract key decisions, action items, and next steps from this meeting transcript.',
+          })
+        });
+
+        if (processResponse.ok) {
+          const result = await processResponse.json();
+          console.log('🤖 [AI] LLM processing started, process ID:', result.process_id);
+
+          // Don't wait here - the meeting-details page will poll for results
+          toast.success('AI processing started!', {
+            description: 'View meeting details to see extracted action items and decisions.',
+            action: {
+              label: 'View Meeting',
+              onClick: () => {
+                router.push(`/meeting-details?id=${meetingId}`);
+              }
+            },
+            duration: 10000,
+          });
+        }
+      } catch (aiError) {
+        console.warn('⚠️ [AI] LLM post-processing failed:', aiError);
+        // Don't fail the whole save if AI processing fails
+      }
 
       // Auto-navigate after delay
       setTimeout(() => {
         router.push(`/meeting-details?id=${meetingId}`);
         Analytics.trackPageView('meeting_details');
-      }, 2000);
+      }, 3000);
 
       setMeetings([{ id: meetingId, title: meetingTitle || 'Web Audio Meeting' }, ...meetings]);
 
@@ -851,6 +899,112 @@ export default function Home() {
 
     toast.success("Transcript copied to clipboard");
   }, [transcripts]);
+
+  // Handle Catch Me Up - get quick summary of meeting so far
+  // Get meeting duration in minutes for time range validation
+  const getMeetingDurationMinutes = useCallback(() => {
+    if (!transcripts.length) return 0;
+
+    // Try to use audio_start_time if available on transcripts
+    const withTime = transcripts.filter(t => t.audio_start_time !== undefined && t.audio_start_time > 0);
+
+    if (withTime.length >= 2) {
+      const firstTime = withTime[0].audio_start_time!;
+      const lastTime = withTime[withTime.length - 1].audio_start_time!;
+      const duration = Math.ceil((lastTime - firstTime) / 60);
+      if (duration > 0) return duration;
+    }
+
+    // Fallback: estimate based on transcript count
+    // Streaming sends transcripts roughly every ~8-10 seconds
+    const estimatedSeconds = transcripts.length * 8;
+    return Math.max(1, Math.ceil(estimatedSeconds / 60));
+  }, [transcripts]);
+
+  const handleCatchUp = useCallback(async (minutes: number | null = null) => {
+    if (!transcripts.length) {
+      toast.error("No transcript yet to catch up on");
+      return;
+    }
+
+    setShowCatchUpMenu(false);
+    setIsCatchUpOpen(true);
+    setIsCatchUpLoading(true);
+    setCatchUpSummary('');
+    setCatchUpMinutes(minutes);
+
+    try {
+      // Filter transcripts by time range if specified
+      let filteredTranscripts = transcripts;
+
+      if (minutes !== null && transcripts.length > 0) {
+        // Check if transcripts have audio_start_time
+        const hasTimestamps = transcripts.some(t => t.audio_start_time && t.audio_start_time > 0);
+
+        if (hasTimestamps) {
+          // Use audio_start_time filtering
+          const lastTranscriptTime = transcripts[transcripts.length - 1].audio_start_time || 0;
+          const cutoffTime = lastTranscriptTime - (minutes * 60);
+          filteredTranscripts = transcripts.filter(t =>
+            (t.audio_start_time || 0) >= cutoffTime
+          );
+        } else {
+          // Fallback: use index-based filtering
+          // Estimate: ~8 seconds per transcript
+          const transcriptsPerMinute = 60 / 8; // ~7.5 transcripts/min
+          const targetCount = Math.ceil(minutes * transcriptsPerMinute);
+          const startIndex = Math.max(0, transcripts.length - targetCount);
+          filteredTranscripts = transcripts.slice(startIndex);
+        }
+
+        if (filteredTranscripts.length === 0) {
+          // If no transcripts in range, use all
+          filteredTranscripts = transcripts;
+        }
+      }
+
+      const transcriptTexts = filteredTranscripts.map(t => t.text);
+
+      const timeLabel = minutes ? `last ${minutes} minutes` : 'entire meeting';
+      console.log(`[CatchUp] Summarizing ${timeLabel}: ${transcriptTexts.length} transcripts`);
+
+      const response = await fetch(`${serverAddress}/catch-up`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcripts: transcriptTexts,
+          model: 'groq',
+          model_name: 'llama-3.3-70b-versatile'
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to get catch-up: ${response.statusText}`);
+      }
+
+      // Stream the response
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+
+      const decoder = new TextDecoder();
+      let summary = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        summary += chunk;
+        setCatchUpSummary(summary);
+      }
+    } catch (error) {
+      console.error('Catch-up error:', error);
+      setCatchUpSummary('Error getting catch-up summary. Please try again.');
+    } finally {
+      setIsCatchUpLoading(false);
+    }
+  }, [transcripts, serverAddress]);
+
 
   const handleGenerateSummary = useCallback(async () => {
     if (!transcripts.length) {
@@ -1612,6 +1766,173 @@ export default function Home() {
         {/*     </div> */}
         {/*   )} */}        {/* </div> */}
       </div>
+
+      {/* Chat Interface - Only show when recording or meeting is active */}
+      {(isRecording || isMeetingActive) && (
+        <>
+          {isChatOpen && (
+            <ChatInterface
+              meetingId={'current-recording'}
+              currentTranscripts={transcripts}
+              onClose={() => setIsChatOpen(false)}
+            />
+          )}
+
+          {!isChatOpen && (
+            <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-40">
+              {/* Catch Me Up Button with Time Menu */}
+              <div className="relative">
+                <motion.button
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowCatchUpMenu(!showCatchUpMenu)}
+                  className="p-3 bg-amber-500 text-white rounded-full shadow-lg hover:bg-amber-600 transition-colors flex items-center gap-2"
+                  title="Get a quick summary of the meeting so far"
+                >
+                  <Zap className="w-5 h-5" />
+                  <span className="font-medium text-sm">Catch Up</span>
+                </motion.button>
+
+                {/* Time Selection Menu */}
+                {showCatchUpMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    className="absolute bottom-full right-0 mb-2 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden min-w-[180px]"
+                  >
+                    <div className="p-2 border-b border-gray-100">
+                      <p className="text-xs text-gray-500 font-medium px-2">Summarize:</p>
+                    </div>
+                    <div className="p-1">
+                      {[
+                        { label: 'Last 5 mins', value: 5 },
+                        { label: 'Last 10 mins', value: 10 },
+                        { label: 'Last 30 mins', value: 30 },
+                        { label: 'Entire meeting', value: null },
+                      ].map((option) => {
+                        const meetingDuration = getMeetingDurationMinutes();
+                        const isDisabled = option.value !== null && option.value > meetingDuration && option.value > 2;
+                        const isMinNotMet = meetingDuration < 0.5; // Less than 30 seconds
+
+                        return (
+                          <button
+                            key={option.label}
+                            onClick={() => {
+                              if (!isDisabled && !isMinNotMet) {
+                                handleCatchUp(option.value);
+                              }
+                            }}
+                            disabled={isDisabled || isMinNotMet}
+                            className={`w-full text-left px-3 py-2 text-sm rounded transition-colors ${isDisabled || isMinNotMet
+                              ? 'text-gray-300 cursor-not-allowed'
+                              : 'text-gray-700 hover:bg-amber-50 hover:text-amber-700'
+                              }`}
+                          >
+                            {option.label}
+                            {option.value !== null && meetingDuration > 0 && option.value > meetingDuration && (
+                              <span className="text-xs text-gray-400 ml-1">(not enough)</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="p-2 border-t border-gray-100">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="2"
+                          max={Math.max(2, getMeetingDurationMinutes())}
+                          placeholder="Custom"
+                          value={customMinutesInput}
+                          onChange={(e) => setCustomMinutesInput(e.target.value)}
+                          className="w-20 px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <span className="text-xs text-gray-500">mins</span>
+                        <button
+                          onClick={() => {
+                            const mins = parseInt(customMinutesInput);
+                            if (mins >= 2 && mins <= getMeetingDurationMinutes()) {
+                              handleCatchUp(mins);
+                              setCustomMinutesInput('');
+                            } else {
+                              toast.error(`Enter 2-${getMeetingDurationMinutes()} minutes`);
+                            }
+                          }}
+                          className="px-2 py-1 bg-amber-500 text-white text-xs rounded hover:bg-amber-600"
+                        >
+                          Go
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* Ask AI Button */}
+              <motion.button
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsChatOpen(true)}
+                className="p-4 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                title="Ask AI about this active meeting"
+              >
+                <Bot className="w-6 h-6" />
+                <span className="font-medium">Ask AI</span>
+              </motion.button>
+            </div>
+          )}
+
+          {/* Catch Me Up Modal */}
+          {isCatchUpOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="fixed bottom-6 right-6 w-80 bg-white rounded-lg shadow-2xl border border-gray-200 z-50 overflow-hidden"
+            >
+              <div className="bg-amber-500 text-white px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-5 h-5" />
+                  <div>
+                    <span className="font-semibold">Catch Me Up</span>
+                    {catchUpMinutes !== null && (
+                      <span className="text-xs opacity-80 ml-1">(Last {catchUpMinutes} mins)</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsCatchUpOpen(false)}
+                  className="text-white hover:text-amber-100 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-4 max-h-80 overflow-y-auto">
+                {isCatchUpLoading && !catchUpSummary ? (
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-500"></div>
+                    <span className="text-sm">Generating summary...</span>
+                  </div>
+                ) : catchUpSummary ? (
+                  <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                    {catchUpSummary}
+                    {isCatchUpLoading && (
+                      <span className="inline-block w-2 h-4 bg-amber-500 animate-pulse ml-1"></span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No transcript available yet.</p>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </>
+      )}
+
     </motion.div>
   );
 }

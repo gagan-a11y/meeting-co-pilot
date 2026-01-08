@@ -2,17 +2,32 @@
 """
 Streaming transcription manager.
 Orchestrates: Audio → VAD → Rolling Buffer → Groq API → Partial/Final transcripts
+
+QUALITY IMPROVEMENTS (Phase 3):
+- Better deduplication with sentence hashing
+- Silero VAD for accurate speech detection (with SimpleVAD fallback)
+- Reduced overlap (1.5s instead of 3s)
+- Sentence boundary detection
+- Debounced final emissions
 """
 
 import asyncio
 import numpy as np
 import logging
 import time
-from typing import Optional, Callable
+import hashlib
+from typing import Optional, Callable, Set
 from concurrent.futures import ThreadPoolExecutor
 from groq_client import GroqTranscriptionClient
-from vad import SimpleVAD
 from rolling_buffer import RollingAudioBuffer
+
+# Try to import Silero VAD, fallback to SimpleVAD
+try:
+    from vad import SileroVAD
+    USE_SILERO = True
+except ImportError:
+    from vad import SimpleVAD
+    USE_SILERO = False
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +43,26 @@ class StreamingTranscriptionManager:
             groq_api_key: Groq API key for Whisper Large v3
         """
         self.groq = GroqTranscriptionClient(groq_api_key)
-        self.vad = SimpleVAD(threshold=0.08)  # Even less sensitive (was 0.05)
+        
+        # Use Silero VAD if available (ML-based, more accurate)
+        if USE_SILERO:
+            try:
+                self.vad = SileroVAD(threshold=0.5)
+                logger.info("✅ Using SileroVAD (ML-based)")
+            except Exception as e:
+                logger.warning(f"⚠️ SileroVAD failed to load: {e}. Using SimpleVAD.")
+                from vad import SimpleVAD
+                self.vad = SimpleVAD(threshold=0.08)
+        else:
+            from vad import SimpleVAD
+            self.vad = SimpleVAD(threshold=0.08)
+            logger.info("ℹ️ Using SimpleVAD (torch not available)")
+        
+        # IMPROVED: Reduced overlap for less duplication
+        # 12s window, 10.5s slide = 1.5s overlap (was 3s)
         self.buffer = RollingAudioBuffer(
-            window_duration_ms=6000,  # 6s window - more context for Hinglish sentences
-            slide_duration_ms=5000    # Process every 5s - 1s overlap (catches boundary words)
+            window_duration_ms=12000,  # 12s window
+            slide_duration_ms=10500    # 1.5s overlap for context
         )
 
         # Transcript state
@@ -40,6 +71,10 @@ class StreamingTranscriptionManager:
         self.silence_duration_ms = 0
         self.same_text_count = 0
         self.is_speaking = False
+        
+        # IMPROVED: Track finalized sentence hashes to prevent duplicates
+        self.finalized_hashes: Set[str] = set()
+        self.finalized_words: Set[str] = set()  # Track individual words for overlap detection
 
         # Thread pool for Groq API calls (blocking)
         self.executor = ThreadPoolExecutor(max_workers=2)
@@ -48,7 +83,12 @@ class StreamingTranscriptionManager:
         self.total_chunks_processed = 0
         self.total_transcriptions = 0
 
-        logger.info("✅ StreamingTranscriptionManager initialized")
+        # Time-based debounce
+        self.last_transcription_time = 0
+        self.min_transcription_interval = 8.0  # Reduced from 10s to 8s
+
+        logger.info("✅ StreamingTranscriptionManager initialized (12s buffer, 1.5s overlap)")
+
 
     async def process_audio_chunk(
         self,
@@ -82,18 +122,33 @@ class StreamingTranscriptionManager:
             # Add to rolling buffer
             should_transcribe = self.buffer.add_samples(audio_samples)
 
-            if should_transcribe and self.buffer.is_buffer_full():
-                # Get 2-second window
+            # Get current state
+            buffer_duration = self.buffer.get_buffer_duration_ms()
+            is_full = self.buffer.is_buffer_full()
+            current_time = time.time()
+            time_since_last = current_time - self.last_transcription_time
+
+            if self.total_chunks_processed % 20 == 0:
+                logger.debug(
+                    f"📊 Buffer: {buffer_duration:.0f}ms, full={is_full}, "
+                    f"since_last={time_since_last:.1f}s"
+                )
+
+            # Trigger transcription when buffer is full AND enough time has passed
+            if is_full and time_since_last >= self.min_transcription_interval:
+                logger.info(f"🚀 Transcription triggered (buffer={buffer_duration:.0f}ms)")
+
+                # Get window and transcribe
                 window_bytes = self.buffer.get_window_bytes()
+                self.last_transcription_time = current_time
 
                 # Transcribe with Groq (run in thread pool since it's blocking)
-                # Auto-detect language, then translate if needed
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     self.executor,
                     self.groq.transcribe_audio_sync,
                     window_bytes,
-                    "auto",  # Auto-detect language (not forcing Hindi)
+                    "auto",  # Auto-detect language
                     self.last_final_text[-100:] if self.last_final_text else None,
                     True  # translate_to_english=True
                 )
@@ -105,7 +160,7 @@ class StreamingTranscriptionManager:
                         confidence=result.get("confidence", 1.0),
                         on_partial=on_partial,
                         on_final=on_final,
-                        metadata=result  # Pass full result for translation data
+                        metadata=result
                     )
 
         else:
@@ -113,10 +168,12 @@ class StreamingTranscriptionManager:
             if self.is_speaking:
                 self.silence_duration_ms += 100  # Estimate chunk duration
 
-                # Finalize if silence > 1000ms (was 500ms)
+                # Finalize if silence > 1000ms
                 if self.silence_duration_ms > 1000 and self.last_partial_text:
-                    # Deduplication check
-                    if self.last_partial_text not in self.last_final_text:
+                    # IMPROVED: Hash-based deduplication check
+                    sentence_hash = self._get_sentence_hash(self.last_partial_text)
+                    
+                    if sentence_hash not in self.finalized_hashes:
                         logger.debug(f"🔇 Speech ended (silence > 1s)")
 
                         if on_final:
@@ -126,6 +183,7 @@ class StreamingTranscriptionManager:
                                 "reason": "silence"
                             })
 
+                        self.finalized_hashes.add(sentence_hash)
                         self.last_final_text += " " + self.last_partial_text
                     else:
                         logger.debug(f"⏭️  Skipping duplicate (silence): '{self.last_partial_text[:50]}...'")
@@ -140,50 +198,140 @@ class StreamingTranscriptionManager:
         if processing_time > 0.1:  # Log if taking >100ms
             logger.debug(f"⏱️  Chunk processing: {processing_time*1000:.1f}ms")
 
+    def _word_similarity(self, words1: list, words2: list) -> float:
+        """Calculate similarity between two word lists (0.0 to 1.0)."""
+        if not words1 or not words2:
+            return 0.0
+        # Count matching words
+        set1 = set(w.lower() for w in words1)
+        set2 = set(w.lower() for w in words2)
+        intersection = len(set1 & set2)
+        union = len(set1 | set2)
+        return intersection / union if union > 0 else 0.0
+
     def _remove_overlap(self, new_text: str) -> str:
         """
-        Remove overlapping text from new transcript using smart word matching.
+        Remove overlapping text using fuzzy matching.
+        Handles Whisper's slight wording variations in overlapping audio.
 
-        Example:
-            last_final_text = "Hello how are you"
-            new_text = "are you doing today"
-            return = "doing today"  (removed "are you" overlap)
+        Uses word-level similarity to detect overlaps even when exact text differs.
         """
         if not self.last_final_text:
             return new_text
 
-        # Get last N words from final transcript to check for overlap
         final_words = self.last_final_text.split()
         new_words = new_text.split()
 
-        # Don't process if too short
-        if len(new_words) < 2:
+        if len(new_words) < 4:
             return new_text
 
-        # Check for overlapping words at the start of new text
-        # Look for matches in last 10 words of final transcript
-        overlap_length = 0
-        search_window = min(10, len(final_words))
+        # Look for overlaps in the first 40% of new text (overlap window)
+        max_overlap_check = min(20, len(new_words) // 2 + 5)
+        
+        # Get last 30 words of previous transcript for comparison
+        search_window = min(30, len(final_words))
+        final_tail_words = final_words[-search_window:]
+        
+        best_overlap = 0
+        similarity_threshold = 0.6  # 60% word match = overlap detected
+        
+        # Try different overlap sizes, largest first
+        for overlap_size in range(max_overlap_check, 2, -1):
+            new_head = new_words[:overlap_size]
+            
+            # Check similarity against different positions in final tail
+            for start in range(0, min(15, search_window)):
+                if start + overlap_size > search_window:
+                    break
+                    
+                final_segment = final_tail_words[start:start + overlap_size]
+                similarity = self._word_similarity(new_head, final_segment)
+                
+                if similarity >= similarity_threshold:
+                    best_overlap = max(best_overlap, overlap_size)
+                    break
+            
+            # Also check if new_head matches the END of final_tail
+            if overlap_size <= search_window:
+                final_end = final_tail_words[-overlap_size:]
+                similarity = self._word_similarity(new_head, final_end)
+                if similarity >= similarity_threshold:
+                    best_overlap = max(best_overlap, overlap_size)
+            
+            if best_overlap > 0:
+                break
 
-        for i in range(search_window, 0, -1):
-            # Get last i words from final transcript
-            final_tail = " ".join(final_words[-i:]).lower()
-
-            # Check if new text starts with these words
-            for j in range(1, min(i + 1, len(new_words) + 1)):
-                new_head = " ".join(new_words[:j]).lower()
-
-                # Found overlap
-                if final_tail.endswith(new_head) or new_head in final_tail:
-                    overlap_length = max(overlap_length, j)
-
-        # Remove overlapping words from start of new text
-        if overlap_length > 0:
-            deduplicated = " ".join(new_words[overlap_length:])
-            logger.debug(f"🔄 Removed {overlap_length} overlapping words: '{' '.join(new_words[:overlap_length])}'")
+        # Remove overlapping words
+        if best_overlap > 0:
+            deduplicated = " ".join(new_words[best_overlap:])
+            logger.info(f"🔄 Removed ~{best_overlap} overlapping words (fuzzy match)")
             return deduplicated.strip()
 
         return new_text
+
+    def _get_sentence_hash(self, text: str) -> str:
+        """Generate hash for normalized text to detect exact duplicates."""
+        # Normalize: lowercase, collapse whitespace
+        normalized = ' '.join(text.lower().split())
+        return hashlib.md5(normalized.encode()).hexdigest()[:16]
+    
+    def _is_complete_sentence(self, text: str) -> bool:
+        """Check if text ends with sentence-ending punctuation."""
+        text = text.strip()
+        # Check for common sentence endings in English/Hindi
+        sentence_endings = ('.', '!', '?', '。', '？', '！', '।')
+        return text.endswith(sentence_endings)
+    
+    def _extract_new_words(self, text: str) -> str:
+        """Remove words already seen in finalized transcripts."""
+        words = text.split()
+        new_words = []
+        for word in words:
+            word_lower = word.lower().strip('.,!?;:')
+            if word_lower and word_lower not in self.finalized_words:
+                new_words.append(word)
+                self.finalized_words.add(word_lower)
+        return ' '.join(new_words)
+    
+    def _get_ngrams(self, text: str, n: int = 4) -> set:
+        """Get n-grams (word sequences) from text for similarity matching."""
+        words = text.lower().split()
+        if len(words) < n:
+            return {' '.join(words)} if words else set()
+        return {' '.join(words[i:i+n]) for i in range(len(words) - n + 1)}
+    
+    def _is_near_duplicate(self, text: str, threshold: float = 0.5) -> bool:
+        """Check if text is a near-duplicate of already finalized content.
+        
+        Uses n-gram matching to catch phrases like 'we can jump on the call'
+        that appear in both old and new text even if exact hash differs.
+        """
+        if not self.last_final_text or len(text.split()) < 5:
+            return False
+        
+        # Get 4-grams from new text
+        new_ngrams = self._get_ngrams(text, n=4)
+        if not new_ngrams:
+            return False
+        
+        # Get 4-grams from last portion of finalized text
+        final_words = self.last_final_text.split()
+        # Only check last ~100 words for performance
+        recent_final = ' '.join(final_words[-100:]) if len(final_words) > 100 else self.last_final_text
+        final_ngrams = self._get_ngrams(recent_final, n=4)
+        
+        if not final_ngrams:
+            return False
+        
+        # Calculate overlap ratio
+        overlap = len(new_ngrams & final_ngrams)
+        overlap_ratio = overlap / len(new_ngrams)
+        
+        if overlap_ratio >= threshold:
+            logger.debug(f"⏭️  Near-duplicate detected ({overlap_ratio:.0%} overlap): '{text[:50]}...'")
+            return True
+        
+        return False
 
     async def _handle_transcript(
         self,
@@ -193,13 +341,19 @@ class StreamingTranscriptionManager:
         on_final: Optional[Callable],
         metadata: Optional[dict] = None
     ):
-        """Handle partial vs final transcript logic with smart deduplication"""
+        """Handle partial vs final transcript logic with improved deduplication.
+        
+        QUALITY IMPROVEMENTS:
+        - Hash-based duplicate detection
+        - Sentence boundary detection
+        - Debounced final emissions
+        """
 
         # Skip empty or very short text
         if not text or len(text.strip()) < 3:
             return
 
-        # SMART DEDUPLICATION: Remove overlapping words from start
+        # IMPROVED: Remove overlapping words from start
         deduplicated_text = self._remove_overlap(text)
 
         # Skip if nothing left after deduplication
@@ -209,6 +363,17 @@ class StreamingTranscriptionManager:
 
         # Use deduplicated text for processing
         text = deduplicated_text
+        
+        # IMPROVED: Check if this exact text was already finalized (hash check)
+        sentence_hash = self._get_sentence_hash(text)
+        if sentence_hash in self.finalized_hashes:
+            logger.debug(f"⏭️  Skipping duplicate hash: '{text[:50]}...'")
+            return
+        
+        # IMPROVED: Check for near-duplicates using n-gram matching
+        if self._is_near_duplicate(text, threshold=0.4):
+            # 40% of 4-grams match = likely duplicate
+            return
 
         # Check if text stabilized
         if text == self.last_partial_text:
@@ -222,23 +387,34 @@ class StreamingTranscriptionManager:
             await on_partial({
                 "text": text,
                 "confidence": confidence,
-                "is_stable": self.same_text_count >= 2  # Reduced from 3 for faster finalization
+                "is_stable": self.same_text_count >= 2
             })
 
-        # Check if should finalize
+        # IMPROVED: Check if should finalize with sentence boundary detection
+        is_complete_sentence = self._is_complete_sentence(text)
+        
         should_finalize = (
-            self.same_text_count >= 2 or  # Text stable (appeared 3 times)
-            confidence > 0.95              # High confidence
+            # Complete sentence + stable text
+            (self.same_text_count >= 2 and is_complete_sentence) or
+            # Force finalize after 4 repeats (even without punctuation)
+            self.same_text_count >= 4 or
+            # Very high confidence
+            confidence > 0.98
         )
 
         if should_finalize:
+            # IMPROVED: Debounce - check hash before emitting
+            if sentence_hash in self.finalized_hashes:
+                logger.debug(f"⏭️  Debounced duplicate final: '{text[:50]}...'")
+                return
+                
             if on_final:
-                logger.debug(f"✅ Finalizing: '{text[:50]}...'")
+                logger.debug(f"✅ Finalizing: '{text[:50]}...' (sentence={is_complete_sentence})")
 
                 final_data = {
                     "text": text,
                     "confidence": confidence,
-                    "reason": "stability"
+                    "reason": "sentence_complete" if is_complete_sentence else "stability"
                 }
 
                 # Include translation metadata if available
@@ -250,6 +426,8 @@ class StreamingTranscriptionManager:
 
                 await on_final(final_data)
 
+                # Track finalized text
+                self.finalized_hashes.add(sentence_hash)
                 self.last_final_text += " " + text
                 self.last_partial_text = ""
                 self.same_text_count = 0
@@ -275,6 +453,9 @@ class StreamingTranscriptionManager:
         self.is_speaking = False
         self.total_chunks_processed = 0
         self.total_transcriptions = 0
+        # Clear deduplication tracking
+        self.finalized_hashes.clear()
+        self.finalized_words.clear()
         logger.info("🔄 Manager reset")
 
     def cleanup(self):

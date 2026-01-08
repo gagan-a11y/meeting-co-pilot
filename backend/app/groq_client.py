@@ -111,32 +111,32 @@ class GroqTranscriptionClient:
 
             wav_buffer.seek(0)
 
-            # SIMPLE TRANSCRIPTION: No prompt (prompts can leak into output)
-            # Let Whisper do its thing without interference
+            # TRANSLATION MODE: Convert any language directly to English
+            # This avoids Urdu script and provides clean English output
             if translate_to_english:
-                logger.debug(f"🔄 Simple transcription (no prompt, auto-detect)")
+                logger.debug(f"🔄 Using Whisper TRANSLATION mode (direct to English)")
 
-                # NO PROMPT - prompts were leaking into transcription output
-                # Whisper works best when left alone for multilingual content
-                transcription = self.client.audio.transcriptions.create(
+                # Use the translations endpoint instead of transcriptions
+                # This translates Hindi/Urdu/any language directly to English
+                translation = self.client.audio.translations.create(
                     file=("audio.wav", wav_buffer.read()),
                     model="whisper-large-v3",
                     response_format="verbose_json",
                     temperature=0.0
-                    # No language, no prompt - pure transcription
+                    # No language param - auto-detect source, output is always English
                 )
 
-                text = transcription.text.strip()
-                detected_lang = getattr(transcription, 'language', 'auto')
+                text = translation.text.strip()
+                detected_lang = getattr(translation, 'language', 'auto')
 
-                logger.info(f"✅ Transcription ({detected_lang}): '{text[:70]}...'")
+                logger.info(f"✅ Translated to English: '{text[:70]}...'")
 
                 return {
                     "text": text,
                     "confidence": 1.0,
-                    "language": detected_lang,
-                    "translated": False,
-                    "original_text": None
+                    "language": "en",  # Output is always English
+                    "translated": True,
+                    "source_language": detected_lang
                 }
 
             # TRANSCRIPTION-ONLY MODE: If translation disabled

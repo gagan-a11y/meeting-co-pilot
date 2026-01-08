@@ -1,3 +1,9 @@
+export interface Meeting {
+  id: string;
+  title?: string;
+  date: string;
+}
+
 export interface Message {
   id: string;
   content: string;

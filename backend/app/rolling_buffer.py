@@ -102,8 +102,10 @@ class RollingAudioBuffer:
         return (len(self.buffer) / self.sample_rate) * 1000
 
     def is_buffer_full(self) -> bool:
-        """Check if buffer has reached full window size"""
-        return len(self.buffer) >= self.window_size
+        """Check if buffer has reached minimum viable window size (90% of target)"""
+        # Use 90% threshold to avoid edge cases where buffer never fully fills
+        min_viable_size = int(self.window_size * 0.9)
+        return len(self.buffer) >= min_viable_size
 
     def clear(self):
         """Clear the buffer"""

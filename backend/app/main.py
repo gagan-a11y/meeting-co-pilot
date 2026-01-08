@@ -1,13 +1,14 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 import uvicorn
-from typing import Optional, List
+from typing import Optional, List, Dict
 import logging
 from dotenv import load_dotenv
 from db import DatabaseManager
 import json
+import asyncio
 from threading import Lock
 from transcript_processor import TranscriptProcessor
 import time
@@ -108,6 +109,28 @@ class TranscriptRequest(BaseModel):
     chunk_size: Optional[int] = 5000
     overlap: Optional[int] = 1000
     custom_prompt: Optional[str] = "Generate a summary of the meeting transcript."
+
+class ChatRequest(BaseModel):
+    meeting_id: str
+    question: str
+    model: str
+    model_name: str
+    context_text: Optional[str] = None
+    allowed_meeting_ids: Optional[List[str]] = None  # Scoped search
+    history: Optional[List[Dict[str, str]]] = None   # Conversation history
+
+class CatchUpRequest(BaseModel):
+    """Request model for catch-up summary"""
+    transcripts: List[str]  # Current transcripts as list of strings
+    model: str = "groq"
+    model_name: str = "llama-3.1-8b-instant"
+
+class SearchContextRequest(BaseModel):
+    """Request model for cross-meeting context search"""
+    query: str
+    n_results: int = 5
+    allowed_meeting_ids: Optional[List[str]] = None  # None = search all meetings
+
 
 class SummaryProcessor:
     """Handles the processing of summaries in a thread-safe way"""
@@ -367,6 +390,192 @@ async def process_transcript_api(
         logger.error(f"Error in process_transcript_api: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/chat-meeting")
+async def chat_meeting(request: ChatRequest):
+    """
+    Chat with a specific meeting using AI.
+    Streams the response back to the client.
+    """
+    try:
+        logger.info(f"Received chat request for meeting {request.meeting_id}")
+        logger.info(f"Allowed meeting IDs: {request.allowed_meeting_ids}")
+        logger.info(f"History length: {len(request.history) if request.history else 0}")
+
+        # 1. Get current meeting context (real-time)
+        full_text = ""
+        # 1. Get current meeting context (real-time)
+        full_text = ""
+        # FIX: Check for uniqueness of context_text (if provided, use it, even if empty string)
+        if request.context_text is not None:
+            full_text = request.context_text
+            logger.info("Using provided context_text for chat")
+        else:
+            # Get meeting data from DB only if meeting_id is likely valid (not "current-recording")
+            # But simpler to just try fetching if context wasn't provided
+            meeting_data = await db.get_meeting(request.meeting_id)
+            if meeting_data:
+                # Construct context from transcripts
+                transcripts = meeting_data.get('transcripts', [])
+                if not transcripts:
+                     # Try getting from transcript_chunks if individual transcripts are empty (fallback)
+                    chunk_data = await db.get_transcript_data(request.meeting_id)
+                    if chunk_data and chunk_data.get("transcript"): 
+                         full_text = chunk_data.get("transcript")
+                    elif chunk_data and chunk_data.get("transcript_text"): 
+                         full_text = chunk_data.get("transcript_text")
+                else:
+                    # Join all transcript segments
+                    full_text = "\n".join([t['text'] for t in transcripts])
+            else:
+                 # If meeting not found in DB and no context provided, we just have empty context.
+                 # We don't 404 here because the user might just want to chat with history/other meetings.
+                 logger.warning(f"Meeting {request.meeting_id} not found in DB and no context provided.")
+
+        # FIX: Allow proceeding if we have cross-meeting context (allowed_meeting_ids) OR if it's a general question
+        # The prompt will handle empty context.
+        if not full_text and not request.allowed_meeting_ids and not request.history:
+             # Only block if we truly have NOTHING to go on (no context, no linked search, no history)
+             # But actually, users might just want to say "Hi". So we should arguably always allow it.
+             # However, to preserve original intent of "No transcript", we'll keep it soft.
+             logger.info("No context, history, or linked meetings. Proceeding with empty context.")
+
+        # 3. Stream response using TranscriptProcessor
+        stream_generator = await processor.transcript_processor.chat_about_meeting(
+            context=full_text,
+            question=request.question,
+            model=request.model,
+            model_name=request.model_name,
+            allowed_meeting_ids=request.allowed_meeting_ids,
+            history=request.history
+        )
+
+        return StreamingResponse(stream_generator, media_type="text/plain")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in chat_meeting: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/catch-up")
+async def catch_up(request: CatchUpRequest):
+    """
+    Generate a quick bulleted summary of the meeting so far.
+    For late joiners or participants who zoned out.
+    Streams the response back for fast display.
+    """
+    try:
+        logger.info(f"Catch-up request received with {len(request.transcripts)} transcripts")
+        
+        # Join all transcripts
+        full_text = "\n".join(request.transcripts)
+        
+        if not full_text or len(full_text.strip()) < 10:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Not enough transcript content to summarize yet."}
+            )
+        
+        # Create catch-up prompt
+        catch_up_prompt = f"""You are a meeting assistant. A participant just joined late or zoned out and needs a quick catch-up.
+
+Based on the meeting transcript below, provide a BRIEF bulleted summary of:
+• Key topics discussed
+• Important decisions made
+• Action items mentioned
+• Any deadlines or dates mentioned
+
+Keep it SHORT (max 5-7 bullets). Start each bullet with "•".
+Be conversational: "The team discussed..." not "Discussion of..."
+
+Meeting Transcript:
+---
+{full_text}
+---
+
+Quick Catch-Up Summary:"""
+
+        # Stream response using Groq for speed
+        async def generate_catch_up():
+            try:
+                if request.model == "groq":
+                    api_key = await db.get_api_key("groq")
+                    if not api_key:
+                        import os
+                        api_key = os.getenv("GROQ_API_KEY")
+                    if not api_key:
+                        yield "Error: Groq API key not configured"
+                        return
+                    
+                    from groq import AsyncGroq
+                    client = AsyncGroq(api_key=api_key)
+                    
+                    stream = await client.chat.completions.create(
+                        messages=[{"role": "user", "content": catch_up_prompt}],
+                        model=request.model_name,
+                        stream=True,
+                        max_tokens=500,  # Keep it short
+                        temperature=0.3,  # More focused
+                    )
+                    
+                    async for chunk in stream:
+                        content = chunk.choices[0].delta.content or ""
+                        if content:
+                            yield content
+                else:
+                    yield "Error: Only Groq model is currently supported for catch-up"
+                    
+            except Exception as e:
+                logger.error(f"Error generating catch-up: {e}", exc_info=True)
+                yield f"\n\nError: {str(e)}"
+        
+        return StreamingResponse(generate_catch_up(), media_type="text/plain")
+        
+    except Exception as e:
+        logger.error(f"Error in catch_up: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+
+@app.post("/search-context")
+async def search_context_endpoint(request: SearchContextRequest):
+    """
+    Search across past meetings for relevant context.
+    Returns matching chunks with source citations.
+    """
+    try:
+        from vector_store import search_context, get_collection_stats
+        
+        # Check if vector store is available
+        stats = get_collection_stats()
+        if stats.get("status") != "available":
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Vector store not available", "results": []}
+            )
+        
+        # Perform search
+        results = await search_context(
+            query=request.query,
+            n_results=request.n_results,
+            allowed_meeting_ids=request.allowed_meeting_ids
+        )
+        
+        return {
+            "status": "success",
+            "query": request.query,
+            "results": results,
+            "total_indexed": stats.get("count", 0)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in search_context: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/get-summary/{meeting_id}")
 async def get_summary(meeting_id: str):
     """Get the summary for a given meeting ID"""
@@ -544,6 +753,21 @@ async def save_transcript(request: SaveTranscriptRequest):
             )
 
         logger.info("Transcripts saved successfully")
+        
+        # Store embeddings for cross-meeting search
+        try:
+            from vector_store import store_meeting_embeddings
+            transcript_dicts = [{"text": t.text, "timestamp": t.timestamp} for t in request.transcripts]
+            chunks_stored = await store_meeting_embeddings(
+                meeting_id=meeting_id,
+                meeting_title=request.meeting_title,
+                meeting_date=datetime.now().isoformat(),
+                transcripts=transcript_dicts
+            )
+            logger.info(f"✅ Stored {chunks_stored} embedding chunks for cross-meeting search")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to store embeddings (non-critical): {e}")
+        
         return {"status": "success", "message": "Transcript saved successfully", "meeting_id": meeting_id}
     except Exception as e:
         logger.error(f"Error saving transcript: {str(e)}", exc_info=True)
@@ -634,7 +858,7 @@ async def search_transcripts(request: SearchRequest):
 
 
 # ============================================================================
-# Groq Streaming WebSocket Endpoint (New Real-Time Architecture)
+# Streaming Transcription WebSocket Endpoint (Multi-Provider Architecture)
 # ============================================================================
 
 from streaming_transcription import StreamingTranscriptionManager
@@ -643,54 +867,52 @@ from streaming_transcription import StreamingTranscriptionManager
 streaming_managers = {}
 
 @app.websocket("/ws/streaming-audio")
-async def websocket_streaming_audio(websocket: WebSocket):
+async def websocket_streaming_audio(websocket: WebSocket, session_id: Optional[str] = None):
     """
     Real-time streaming transcription with Groq Whisper Large v3.
 
-    NEW ARCHITECTURE (vs /ws/audio):
-    - Continuous PCM audio stream (not chunks)
-    - VAD (Voice Activity Detection)
-    - Rolling 2s buffer with 500ms slide
-    - Groq API (~0.5s latency)
-    - Partial (gray) + Final (black) transcripts
-
-    Flow:
-    1. Browser sends continuous PCM audio (16kHz, mono, 16-bit)
-    2. Backend uses VAD to detect speech vs silence
-    3. Rolling buffer accumulates 2s of audio
-    4. Every 500ms, send to Groq Whisper API
-    5. Return partial (updating) and final (locked) transcripts
+    HYBRID MODE:
+    - VAD detects natural speech pauses (for coherent sentences)
+    - Max-wait timer forces transcription after 8s of continuous speech
+    - 4s buffer with 3s processing interval
     """
     await websocket.accept()
-    session_id = str(uuid.uuid4())
-
-    # Get Groq API key
-    import os
-    from dotenv import load_dotenv
-
-    # Try loading from /tmp/.env first, then environment
-    load_dotenv("/tmp/.env")
-    groq_api_key = os.getenv("GROQ_API_KEY")
-    if not groq_api_key:
-        logger.error("[Streaming] GROQ_API_KEY not found")
-        await websocket.send_json({
-            "type": "error",
-            "message": "GROQ_API_KEY not configured. Please add it to backend/.env"
-        })
-        await websocket.close()
-        return
-
-    # Create streaming manager for this session
-    manager = StreamingTranscriptionManager(groq_api_key)
-    streaming_managers[session_id] = manager
-
-    logger.info(f"[Streaming] ✅ Session {session_id} started")
+    
+    # Check if resuming session
+    is_resume = False
+    if session_id and session_id in streaming_managers:
+        manager = streaming_managers[session_id]
+        is_resume = True
+        logger.info(f"[Streaming] 🔄 Resuming session {session_id}")
+    else:
+        # Create new session
+        session_id = str(uuid.uuid4()) if not session_id else session_id
+        
+        # Load env vars
+        import os
+        from dotenv import load_dotenv
+        load_dotenv("/app/.env")
+        load_dotenv(".env")
+        
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            logger.error("[Streaming] GROQ_API_KEY not found")
+            await websocket.send_json({
+                "type": "error",
+                "message": "GROQ_API_KEY not configured. Add it to backend/.env"
+            })
+            await websocket.close()
+            return
+        
+        manager = StreamingTranscriptionManager(groq_api_key)
+        streaming_managers[session_id] = manager
+        logger.info(f"[Streaming] ✅ Session {session_id} started (HYBRID mode)")
 
     # Send connection confirmation
     await websocket.send_json({
         "type": "connected",
         "session_id": session_id,
-        "message": "Groq streaming ready",
+        "message": "Groq streaming ready (HYBRID mode)",
         "timestamp": datetime.utcnow().isoformat()
     })
 
@@ -777,6 +999,79 @@ async def websocket_streaming_audio(websocket: WebSocket):
             del streaming_managers[session_id]
 
         logger.info(f"[Streaming] Session {session_id} cleaned up")
+
+
+@app.get("/list-meetings")
+async def list_meetings():
+    """List all available meetings with basic metadata."""
+    try:
+        meetings = await db.get_all_meetings()
+        return [
+            {
+                "id": m["id"],
+                "title": m["title"],
+                "date": m["created_at"] # get_all_meetings returns 'created_at'
+            }
+            for m in meetings
+        ]
+    except Exception as e:
+        logger.error(f"Error listing meetings: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/reindex-all")
+async def reindex_all():
+    """Admin endpoint to re-index all past meetings into ChromaDB."""
+    try:
+        from vector_store import store_meeting_embeddings
+        
+        # 1. Fetch all meetings
+        meetings = await db.get_all_meetings()
+        logger.info(f"Re-indexing {len(meetings)} meetings...")
+        
+        count = 0
+        successful = 0
+        failed = 0
+        
+        for m in meetings:
+            meeting_id = m["id"]
+            
+            try:
+                # 2. Get full details including transcripts
+                meeting_data = await db.get_meeting(meeting_id)
+                if not meeting_data or not meeting_data.get("transcripts"):
+                    logger.info(f"Skipping {meeting_id}: no transcripts")
+                    continue
+                    
+                # 3. Store in vector DB (sequential processing to avoid ChromaDB race conditions)
+                num_chunks = await store_meeting_embeddings(
+                    meeting_id=meeting_id,
+                    meeting_title=meeting_data.get("title", "Untitled"),
+                    meeting_date=meeting_data.get("created_at", ""),
+                    transcripts=meeting_data.get("transcripts", [])
+                )
+                
+                if num_chunks > 0:
+                    successful += 1
+                    logger.info(f"✅ Indexed meeting {meeting_id}: {num_chunks} chunks")
+                else:
+                    logger.warning(f"⚠️ Meeting {meeting_id} indexed but produced 0 chunks")
+                
+                count += 1
+                
+                # Small delay to ensure ChromaDB processes fully before next meeting
+                await asyncio.sleep(0.05)
+                
+            except Exception as e:
+                failed += 1
+                logger.error(f"❌ Failed to index meeting {meeting_id}: {e}")
+                continue  # Continue with next meeting even if one fails
+            
+        return {"status": "success", "indexed_count": count}
+        
+    except Exception as e:
+        logger.error(f"Re-indexing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.on_event("shutdown")

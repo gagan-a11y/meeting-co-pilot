@@ -6,6 +6,8 @@ import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import Analytics from '@/lib/analytics';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
+import { ChatInterface } from '@/components/MeetingDetails/ChatInterface';
+import { Bot, MessageSquare } from 'lucide-react';
 
 // Custom hooks
 import { useMeetingData } from '@/hooks/meeting-details/useMeetingData';
@@ -38,6 +40,7 @@ export default function PageContent({
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   // Sidebar context
   const { serverAddress } = useSidebar();
@@ -100,7 +103,7 @@ export default function PageContent({
       className="flex flex-col h-screen bg-gray-50"
     >
       <div className="flex flex-1 overflow-hidden">
-      
+
 
         <TranscriptPanel
           transcripts={meetingData.transcripts}
@@ -111,7 +114,7 @@ export default function PageContent({
           isRecording={isRecording}
         />
 
-          <SummaryPanel
+        <SummaryPanel
           meeting={meeting}
           meetingTitle={meetingData.meetingTitle}
           onTitleChange={meetingData.handleTitleChange}
@@ -146,6 +149,29 @@ export default function PageContent({
         />
 
       </div>
+
+      {/* Chat Interface */}
+      {isChatOpen && (
+        <ChatInterface
+          meetingId={meeting.id}
+          onClose={() => setIsChatOpen(false)}
+        />
+      )}
+
+      {/* Floating Chat Button */}
+      {!isChatOpen && (
+        <motion.button
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          onClick={() => setIsChatOpen(true)}
+          className="fixed bottom-6 right-6 p-4 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors z-40 flex items-center gap-2"
+        >
+          <Bot className="w-6 h-6" />
+          <span className="font-medium">Ask AI</span>
+        </motion.button>
+      )}
     </motion.div>
   );
 }

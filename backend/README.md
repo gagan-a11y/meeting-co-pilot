@@ -1,4 +1,4 @@
-# Meetily Backend
+# Meeting Co-Pilot Backend
 
 FastAPI backend for meeting transcription and analysis with **Docker distribution system** for easy deployment.
 

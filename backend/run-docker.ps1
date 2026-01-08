@@ -39,8 +39,8 @@ $ScriptDir = $PSScriptRoot
 $ComposeFile = Join-Path $ScriptDir "docker-compose.yml"
 $WhisperProjectName = "whisper-server"
 $WhisperContainerName = "whisper-server"
-$AppProjectName = "meetily-backend"
-$AppContainerName = "meetily-backend"
+$AppProjectName = "meeting-copilot-backend"
+$AppContainerName = "meeting-copilot-backend"
 $DefaultPort = 8178
 $DefaultAppPort = 5167
 $DefaultModel = "base.en"
@@ -928,7 +928,7 @@ function Invoke-StartCommand {
     }
     
     # Add specific services
-    $composeArgs += @("whisper-server", "meetily-backend")
+    $composeArgs += @("whisper-server", "meeting-copilot-backend")
     
     # Set appropriate dockerfile
     $env:DOCKERFILE = $dockerfile
@@ -976,7 +976,7 @@ function Invoke-StartCommand {
     } else {
         if ($detach) {
             Write-Info "Starting services in background..."
-            & docker-compose -f $ComposeFile --profile default up -d whisper-server meetily-backend
+            & docker-compose -f $ComposeFile --profile default up -d whisper-server meeting-copilot-backend
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Info "Services started in background"
@@ -1095,7 +1095,7 @@ function Invoke-StartCommand {
             Write-Info "Press Ctrl+C to stop services"
             Write-Host ""
             
-            & docker-compose -f $ComposeFile --profile default up whisper-server meetily-backend
+            & docker-compose -f $ComposeFile --profile default up whisper-server meeting-copilot-backend
             
             if ($LASTEXITCODE -eq 0) {
                 Write-Info "Services stopped normally"
@@ -1148,9 +1148,9 @@ function Invoke-LogsCommand {
     # Map service aliases to actual service names
     $serviceMap = @{
         "whisper" = "whisper-server"
-        "app" = "meetily-backend"
-        "backend" = "meetily-backend"
-        "meeting" = "meetily-backend"
+        "app" = "meeting-copilot-backend"
+        "backend" = "meeting-copilot-backend"
+        "meeting" = "meeting-copilot-backend"
     }
     
     # Resolve service name if alias was used
@@ -1170,17 +1170,17 @@ function Invoke-LogsCommand {
     # Add service name(s) or show all
     if ($service) {
         # Validate service name
-        $validServices = @("whisper-server", "meetily-backend")
+        $validServices = @("whisper-server", "meeting-copilot-backend")
         if ($service -notin $validServices) {
             Write-Warn "Unknown service: $service"
-            Write-Info "Available services: whisper-server, meetily-backend"
+            Write-Info "Available services: whisper-server, meeting-copilot-backend"
             Write-Info "Aliases: whisper, app, backend, meeting"
             return
         }
         $logArgs += $service
     } else {
         # Show logs for both services
-        $logArgs += @("whisper-server", "meetily-backend")
+        $logArgs += @("whisper-server", "meeting-copilot-backend")
     }
     
     # Execute docker-compose logs

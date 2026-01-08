@@ -4,7 +4,7 @@ version: '3.8'
 # Docker containers with insufficient resources will drop audio chunks when
 # the processing queue becomes full (MAX_AUDIO_QUEUE_SIZE=10, lib.rs:54).
 # Symptoms: "Dropped old audio chunk" in logs (lib.rs:330-333).
-# 
+#
 # RECOMMENDED RESOURCE ALLOCATION:
 # - Memory: 8GB minimum per service (16GB total recommended)
 # - CPU: 2+ cores per service
@@ -22,11 +22,11 @@ services:
     image: whisper-server:${TAG:-cpu}
     container_name: whisper-server
     restart: unless-stopped
-    
+
     # Port mapping
     ports:
       - "${WHISPER_PORT:-8178}:8178"
-    
+
     # Environment variables
     environment:
       - WHISPER_HOST=0.0.0.0
@@ -38,7 +38,7 @@ services:
       - WHISPER_TRANSLATE=${WHISPER_TRANSLATE:-false}
       - WHISPER_DIARIZE=${WHISPER_DIARIZE:-false}
       - WHISPER_PRINT_PROGRESS=${WHISPER_PRINT_PROGRESS:-true}
-    
+
     # Volume mounts
     volumes:
       # Model storage - persistent across container restarts
@@ -49,7 +49,7 @@ services:
       - ${LOCAL_MODELS_DIR:-./models}:/app/local_models:ro
       # Optional: mount custom configuration
       - ${CONFIG_DIR:-./config}:/app/config:ro
-    
+
     # Exclude from macOS profile
     profiles:
       - default
@@ -62,11 +62,11 @@ services:
     image: whisper-server:macos
     container_name: whisper-server
     restart: unless-stopped
-    
+
     # Port mapping
     ports:
       - "${WHISPER_PORT:-8178}:8178"
-    
+
     # Environment variables (GPU disabled for macOS)
     environment:
       - WHISPER_HOST=0.0.0.0
@@ -79,7 +79,7 @@ services:
       - WHISPER_DIARIZE=${WHISPER_DIARIZE:-false}
       - WHISPER_PRINT_PROGRESS=${WHISPER_PRINT_PROGRESS:-true}
       - WHISPER_PLATFORM=macos
-    
+
     # Volume mounts for macOS (using actual models directory)
     volumes:
       # Map to actual model location on macOS
@@ -88,11 +88,11 @@ services:
       - whisper_uploads:/app/uploads
       # Optional: mount custom configuration
       - ${CONFIG_DIR:-./config}:/app/config:ro
-    
+
     # macOS profile only
     profiles:
       - macos
-    
+
     # GPU support (uncomment for GPU version)
     # deploy:
     #   resources:
@@ -101,19 +101,19 @@ services:
     #         - driver: nvidia
     #           count: all
     #           capabilities: [gpu]
-    
+
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8178/"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8178/" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    
+
     # Resource limits (optional)
     mem_limit: 4g
     mem_reservation: 1g
-    
+
     # Logging configuration
     logging:
       driver: "json-file"
@@ -162,7 +162,7 @@ services:
         echo '🎉 Model preparation complete'
       "
     healthcheck:
-      test: ["CMD", "test", "-f", "/models/ggml-${MODEL_NAME:-base.en}.bin"]
+      test: [ "CMD", "test", "-f", "/models/ggml-${MODEL_NAME:-base.en}.bin" ]
       interval: 10s
       timeout: 5s
       retries: 1
@@ -170,12 +170,12 @@ services:
       - download
 
   # Meeting Summarizer Python App (Windows/Linux)
-  meetily-backend:
+  meeting-copilot-backend:
     build:
       context: .
       dockerfile: Dockerfile.app
-    image: meetily-backend:latest
-    container_name: meetily-backend
+    image: meeting-copilot-backend:latest
+    container_name: meeting-copilot-backend
     restart: unless-stopped
 
     # Port mapping
@@ -189,105 +189,110 @@ services:
       - DATABASE_PATH=/app/data/meeting_minutes.db
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-    
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - TRANSCRIPTION_PROVIDER=${TRANSCRIPTION_PROVIDER:-groq}
+
     # Add extra host for Docker Desktop compatibility
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    
+
     # Volume mounts
     volumes:
       # Local database directory (created by setup-db.sh)
       - ./data:/app/data
+      - ./app:/app
       # Logs directory
       - meeting_app_logs:/app/logs
       # Optional: mount local .env file
-      - ${LOCAL_ENV_FILE:-./app/.env}:/app/.env:ro
-    
+      - ${LOCAL_ENV_FILE:-./.env}:/app/.env:ro
+
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5167/get-meetings"]
+      test: [ "CMD", "curl", "-f", "http://localhost:5167/get-meetings" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    
+
     # Resource limits (optional)
     mem_limit: 2g
     mem_reservation: 512m
-    
+
     # Logging configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    
+
     # Depends on whisper server for transcription
     depends_on:
       whisper-server:
         condition: service_healthy
-    
+
     # Exclude from macOS profile
     profiles:
       - default
 
   # Meeting Summarizer Python App (macOS)
-  meetily-backend-macos:
+  meeting-copilot-backend-macos:
     build:
       context: .
       dockerfile: Dockerfile.app
-    image: meetily-backend:latest
-    container_name: meetily-backend
+    image: meeting-copilot-backend:latest
+    container_name: meeting-copilot-backend
     restart: unless-stopped
-    
+
     # Port mapping
     ports:
       - "${APP_PORT:-5167}:5167"
-    
+
     # Environment variables
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
       - DATABASE_PATH=/app/data/meeting_minutes.db
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
-    
+
     # Add extra host for Docker Desktop compatibility
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    
+
     # Volume mounts
     volumes:
       # Local database directory (created by setup-db.sh)
       - ./data:/app/data
+      - ./app:/app
       # Logs directory
       - meeting_app_logs:/app/logs
       # Optional: mount local .env file
-      - ${LOCAL_ENV_FILE:-./app/.env}:/app/.env:ro
-    
+      - ${LOCAL_ENV_FILE:-./.env}:/app/.env:ro
+
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5167/get-meetings"]
+      test: [ "CMD", "curl", "-f", "http://localhost:5167/get-meetings" ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    
+
     # Resource limits (optional)
     mem_limit: 2g
     mem_reservation: 512m
-    
+
     # Logging configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    
+
     # Depends on macOS whisper server for transcription
     depends_on:
       whisper-server-macos:
         condition: service_healthy
-    
+
     # macOS profile only
     profiles:
       - macos
@@ -303,7 +308,7 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - whisper-server
-      - meetily-backend
+      - meeting-copilot-backend
     profiles:
       - web
 

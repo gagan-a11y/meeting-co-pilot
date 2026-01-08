@@ -431,7 +431,7 @@ const mediaRecorder = new MediaRecorder(stream);
 ### Backend (Already Running)
 ```bash
 # View logs
-docker logs meetily-backend -f
+docker logs meeting-copilot-backend -f
 
 # Test endpoints
 curl http://localhost:5167/get-meetings

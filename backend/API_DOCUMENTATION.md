@@ -1,4 +1,4 @@
-# Meetily API Documentation
+# Meeting Co-Pilot API Documentation
 
 ## Prerequisites
 

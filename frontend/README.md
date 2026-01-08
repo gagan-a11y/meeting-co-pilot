@@ -1,4 +1,4 @@
-# Meetily - Frontend
+# Meeting Co-Pilot - Frontend
 
 A modern web application for recording, transcribing, and analyzing meetings with AI assistance. Built with Next.js.
 
