@@ -91,6 +91,27 @@ QUESTION: {question}
 
 # P1 — High Priority (Plan Next)
 
+## Custom Dictionary ⚡
+
+**Effort:** ~8-10 hours
+**Impact:** Significantly improves transcription accuracy for domain-specific terms, names, and acronyms.
+
+**The Problem:** Transcription models often misinterpret specialized vocabulary, leading to errors and reduced clarity. For example, a medical transcription might mistake "atrial fibrillation" for "arterial bib relation," or a tech discussion might mishear "API" as "a pie."
+
+**Solution:** Implement a feature that allows users to create and manage their own custom dictionaries. The transcription service would then use this dictionary to recognize and prioritize specific words, ensuring they are transcribed accurately.
+
+**Implementation Steps:**
+1.  **UI for Dictionary Management:** Create a user interface where users can add, edit, and delete words in their dictionary.
+2.  **API Integration:** Develop an API endpoint to store and retrieve dictionary entries for each user.
+3.  **Transcription Integration:** Modify the transcription process to incorporate the user's dictionary, biasing the model towards recognizing the custom words.
+
+**Benefits:**
+-   **Improved Accuracy:** Drastically reduces errors for jargon, technical terms, and proper nouns.
+-   **Enhanced User Experience:** Empowers users to fine-tune the transcription to their specific needs.
+-   **Increased Trust:** Delivers more reliable and professional-quality transcripts.
+
+---
+
 ## 4. Time-Aligned Deduplication 🐛
 
 **Effort:** ~4-6 hours  
@@ -300,18 +321,19 @@ Replace keyword-based tier detection with a fast LLM classifier (Groq llama-3.1-
 | 1 | LLM Context Prompting | **P0** | 1-2h | ⚡ Yes |
 | 2 | Smart Timer Trigger | **P0** | 2h | ⚡ Yes |
 | 3 | Grounded Prompt Strategy | **P0** | 30m | ⚡ Done ✅ |
-| 4 | Time-Aligned Dedup | **P1** | 4-6h | Bug fix |
-| 5 | Adaptive VAD Threshold | **P1** | 4-6h | |
-| 6 | Dual Buffer Strategy | **P1** | 6-8h | |
-| 7 | Hybrid Retrieval | **P1** | 3-4h | Search quality |
-| 8 | Chunk Expansion | **P1** | 2-3h | Context |
-| 9 | VAD Timestamps | **P2** | 3h | |
-| 10 | Incremental Embeddings | **P2** | 4h | |
-| 11 | Adaptive Buffer Sizing | **P2** | 4h | |
-| 12 | Frontend Energy Gating | **P2** | 1h | |
-| 13 | WebSocket Compression | **P2** | 2h | |
-| 14 | Time-Weighted Ranking | **P2** | 1-2h | Recency |
-| 15 | LLM Tier Classification | **P2** | 2-3h | Post-demo |
+| 4 | Custom Dictionary | **P1** | 8-10h | Accuracy |
+| 5 | Time-Aligned Dedup | **P1** | 4-6h | Bug fix |
+| 6 | Adaptive VAD Threshold | **P1** | 4-6h | |
+| 7 | Dual Buffer Strategy | **P1** | 6-8h | |
+| 8 | Hybrid Retrieval | **P1** | 3-4h | Search quality |
+| 9 | Chunk Expansion | **P1** | 2-3h | Context |
+| 10 | VAD Timestamps | **P2** | 3h | |
+| 11 | Incremental Embeddings | **P2** | 4h | |
+| 12 | Adaptive Buffer Sizing | **P2** | 4h | |
+| 13 | Frontend Energy Gating | **P2** | 1h | |
+| 14 | WebSocket Compression | **P2** | 2h | |
+| 15 | Time-Weighted Ranking | **P2** | 1-2h | Recency |
+| 16 | LLM Tier Classification | **P2** | 2-3h | Post-demo |
 
 ---
 

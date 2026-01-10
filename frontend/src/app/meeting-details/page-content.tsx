@@ -155,6 +155,7 @@ export default function PageContent({
         <ChatInterface
           meetingId={meeting.id}
           onClose={() => setIsChatOpen(false)}
+          currentTranscripts={meetingData.transcripts}
         />
       )}
 

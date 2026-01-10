@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 import { formatBytes } from '@/lib/formatUtils';
 
 export interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter';
+  provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter' | 'gemini';
   model: string;
   whisperModel: string;
   apiKey?: string | null;
@@ -133,7 +133,8 @@ export function ModelSettingsModal({
   const modelOptions = {
     ollama: models.map((model) => model.name),
     claude: ['claude-3-5-sonnet-latest', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620'],
-    groq: ['llama-3.3-70b-versatile'],
+    groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+    gemini: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp', 'gemini-3-flash'],
     openai: [
       'gpt-5',
       'gpt-5-mini',
@@ -166,7 +167,8 @@ export function ModelSettingsModal({
     modelConfig.provider === 'claude' ||
     modelConfig.provider === 'groq' ||
     modelConfig.provider === 'openai' ||
-    modelConfig.provider === 'openrouter';
+    modelConfig.provider === 'openrouter' ||
+    modelConfig.provider === 'gemini';
 
   // Check if Ollama endpoint has changed but models haven't been fetched yet
   const ollamaEndpointChanged = modelConfig.provider === 'ollama' &&
@@ -524,6 +526,7 @@ export function ModelSettingsModal({
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto">
                 <SelectItem value="claude">Claude</SelectItem>
+                <SelectItem value="gemini">Gemini</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
                 <SelectItem value="ollama">Ollama</SelectItem>
                 <SelectItem value="openai">OpenAI</SelectItem>

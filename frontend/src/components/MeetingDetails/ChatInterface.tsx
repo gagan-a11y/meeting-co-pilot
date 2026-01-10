@@ -40,6 +40,26 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
         scrollToBottom();
     }, [messages]);
 
+    // State for model config
+    const [modelConfig, setModelConfig] = useState<{ provider: string, model: string } | null>(null);
+
+    // Fetch model config on mount
+    useEffect(() => {
+        const fetchConfig = async () => {
+            try {
+                const res = await fetch(`${serverAddress}/get-model-config`);
+                if (res.ok) {
+                    const config = await res.json();
+                    setModelConfig(config);
+                }
+            } catch (e) {
+                console.error("Failed to fetch model config", e);
+            }
+        };
+        fetchConfig();
+    }, [serverAddress]);
+
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim() || isLoading) return;
@@ -53,6 +73,10 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
             // Create a placeholder for the AI response
             setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
 
+            // Use configured model or default to Gemini Flash
+            const provider = modelConfig?.provider || 'gemini';
+            const modelName = modelConfig?.model || 'gemini-3-flash-preview';
+
             const contextText = getContextFromTranscripts();
 
             const response = await fetch(`${serverAddress}/chat-meeting`, {
@@ -61,21 +85,21 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
                 body: JSON.stringify({
                     meeting_id: meetingId,
                     question: userMessage,
-                    model: 'groq',
-                    model_name: 'llama-3.3-70b-versatile',  // 128k context (vs 8k)
-                    // Pass context explicitly if available
+                    model: provider,
+                    model_name: modelName,
                     context_text: contextText || "",
-                    // Pass selected meeting IDs for scoped search
                     allowed_meeting_ids: linkedMeetingIds.length > 0 ? linkedMeetingIds : undefined,
-                    // Pass history for chat memory (last 10 messages)
-                    history: messages.slice(-30).map(m => ({  // Balanced: enough context, fast responses
+                    history: messages.slice(-10).map(m => ({
                         role: m.role,
-                        content: m.content
+                        content: m.content.slice(0, 500)
                     }))
                 }),
             });
 
-            if (!response.ok) throw new Error('Failed to send message');
+            if (!response.ok) {
+                throw new Error(`Request failed: ${response.status}`);
+            }
+
             if (!response.body) throw new Error('No response body');
 
             const reader = response.body.getReader();

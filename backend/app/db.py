@@ -138,9 +138,28 @@ class DatabaseManager:
                     groqApiKey TEXT,
                     openaiApiKey TEXT,
                     anthropicApiKey TEXT,
-                    ollamaApiKey TEXT
+                    ollamaApiKey TEXT,
+                    geminiApiKey TEXT
                 )
             """)
+
+            # Dictionary of table name -> columns to check and add if missing
+            # This serves as a simple migration system
+            tables_to_check = {
+                "settings": [("geminiApiKey", "TEXT")]
+            }
+
+            for table, columns in tables_to_check.items():
+                cursor.execute(f"PRAGMA table_info({table})")
+                existing_columns = [info[1] for info in cursor.fetchall()]
+                
+                for col_name, col_type in columns:
+                    if col_name not in existing_columns:
+                        logger.info(f"Migrating table {table}: Adding column {col_name}")
+                        try:
+                            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+                        except Exception as e:
+                            logger.error(f"Failed to add column {col_name} to {table}: {e}")
 
             # Create transcript_settings table
             cursor.execute("""
@@ -581,7 +600,7 @@ class DatabaseManager:
 
     async def save_api_key(self, api_key: str, provider: str):
         """Save the API key"""
-        provider_list = ["openai", "claude", "groq", "ollama"]
+        provider_list = ["openai", "claude", "groq", "ollama", "gemini", "gemini-3-flash"]
         if provider not in provider_list:
             raise ValueError(f"Invalid provider: {provider}")
         if provider == "openai":
@@ -592,6 +611,8 @@ class DatabaseManager:
             api_key_name = "groqApiKey"
         elif provider == "ollama":
             api_key_name = "ollamaApiKey"
+        elif provider == "gemini":
+            api_key_name = "geminiApiKey"
             
         try:
             async with self._get_connection() as conn:
@@ -626,7 +647,7 @@ class DatabaseManager:
 
     async def get_api_key(self, provider: str):
         """Get the API key"""
-        provider_list = ["openai", "claude", "groq", "ollama"]
+        provider_list = ["openai", "claude", "groq", "ollama", "gemini"]
         if provider not in provider_list:
             raise ValueError(f"Invalid provider: {provider}")
         if provider == "openai":
@@ -637,6 +658,8 @@ class DatabaseManager:
             api_key_name = "groqApiKey"
         elif provider == "ollama":
             api_key_name = "ollamaApiKey"
+        elif provider == "gemini":
+            api_key_name = "geminiApiKey"
         async with self._get_connection() as conn:
             cursor = await conn.execute(f"SELECT {api_key_name} FROM settings WHERE id = '1'")
             row = await cursor.fetchone()
@@ -862,7 +885,7 @@ class DatabaseManager:
         
     async def delete_api_key(self, provider: str):
         """Delete the API key"""
-        provider_list = ["openai", "claude", "groq", "ollama"]
+        provider_list = ["openai", "claude", "groq", "ollama", "gemini"]
         if provider not in provider_list:
             raise ValueError(f"Invalid provider: {provider}")
         if provider == "openai":
@@ -873,6 +896,8 @@ class DatabaseManager:
             api_key_name = "groqApiKey"
         elif provider == "ollama":
             api_key_name = "ollamaApiKey"
+        elif provider == "gemini":
+            api_key_name = "geminiApiKey"
         async with self._get_connection() as conn:
             await conn.execute(f"UPDATE settings SET {api_key_name} = NULL WHERE id = '1'")
             await conn.commit()

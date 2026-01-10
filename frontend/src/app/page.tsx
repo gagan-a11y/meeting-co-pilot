@@ -968,13 +968,24 @@ export default function Home() {
       const timeLabel = minutes ? `last ${minutes} minutes` : 'entire meeting';
       console.log(`[CatchUp] Summarizing ${timeLabel}: ${transcriptTexts.length} transcripts`);
 
+      // The catch-up endpoint currently only supports gemini and groq
+      const supportedProviders = ['gemini', 'groq'];
+      let provider = modelConfig?.provider || 'gemini';
+      let modelName = modelConfig?.model || 'gemini-3-flash';
+
+      if (!supportedProviders.includes(provider)) {
+        console.warn(`[CatchUp] Unsupported provider "${provider}" selected. Falling back to Gemini.`);
+        provider = 'gemini';
+        modelName = 'gemini-3-flash-preview';
+      }
+
       const response = await fetch(`${serverAddress}/catch-up`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcripts: transcriptTexts,
-          model: 'groq',
-          model_name: 'llama-3.3-70b-versatile'
+          model: provider,
+          model_name: modelName
         })
       });
 

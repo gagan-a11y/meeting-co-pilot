@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Tuple, Literal
+from typing import List, Tuple, Literal, Optional, Dict, Any
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.groq import GroqModel
@@ -7,6 +7,7 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.groq import GroqProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
+# Gemini is used directly via google.generativeai, not pydantic-ai
 
 import logging
 import os
@@ -15,6 +16,7 @@ from db import DatabaseManager
 from ollama import chat
 import asyncio
 from ollama import AsyncClient
+from duckduckgo_search import DDGS
 
 
 
@@ -142,6 +144,8 @@ class TranscriptProcessor:
                 llm = OpenAIModel(model_name, provider=OpenAIProvider(api_key=api_key))
                 logger.info(f"Using OpenAI model: {model_name}")
             # --- END OPENAI SUPPORT ---
+            # NOTE: Gemini is not supported via pydantic-ai Agent for structured output.
+            # Use Groq/Claude/OpenAI for meeting summarization. Gemini works for streaming chat.
             else:
                 logger.error(f"Unsupported model provider requested: {model}")
                 raise ValueError(f"Unsupported model provider: {model}")
@@ -285,6 +289,401 @@ class TranscriptProcessor:
             # Remove the client from active clients list
             if client in self.active_clients:
                 self.active_clients.remove(client)
+
+    async def _needs_linked_context(self, question: str, current_context_snippet: str) -> bool:
+        """
+        Use 8b-instant model to quickly determine if the question needs linked meeting context.
+        This saves tokens by avoiding unnecessary cross-meeting searches.
+        
+        Returns True if the question likely needs information from other meetings.
+        """
+        # Fast heuristic checks first (no API call needed)
+        question_lower = question.lower()
+        
+        # Keywords that suggest cross-meeting context is needed
+        cross_meeting_keywords = [
+            "previous meeting", "last meeting", "other meeting", "earlier meeting",
+            "compare", "comparison", "different from", "changed since", "before",
+            "history", "past", "previously discussed", "follow up", "follow-up",
+            "what did we say", "what was said", "mentioned before", "discussed earlier"
+        ]
+        
+        for keyword in cross_meeting_keywords:
+            if keyword in question_lower:
+                logger.info(f"Classifier: keyword '{keyword}' detected, will fetch linked context")
+                return True
+        
+        # If no obvious keywords, use Gemini for quick classification
+        try:
+            api_key = await db.get_api_key("gemini")
+            if not api_key:
+                api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                # Default to True if we can't classify (safer to include context)
+                return True
+
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+
+            classifier_prompt = f"""You are a classifier. Given a question about a meeting, determine if the answer REQUIRES information from OTHER/PREVIOUS meetings.
+
+Question: "{question}"
+
+Current meeting snippet: "{current_context_snippet[:500]}"
+
+Answer ONLY "YES" or "NO".
+- "YES" if the question asks about comparisons, history, previous discussions, or references other meetings
+- "NO" if the question can be answered using only the current meeting context"""
+
+            response = model.generate_content(classifier_prompt)
+            
+            answer = response.text.strip().upper()
+            needs_context = "YES" in answer
+            logger.info(f"Classifier response: '{answer}' -> needs_linked_context={needs_context}")
+            return needs_context
+            
+        except Exception as e:
+            logger.warning(f"Classifier failed, defaulting to False: {e}")
+            # Default to False (don't fetch) to save tokens
+            return False
+
+    async def search_web(self, query: str) -> str:
+        """
+        Search the web using DuckDuckGo.
+        Returns a summary of search results.
+        """
+        logger.info(f"Web search for: {query}")
+        try:
+            # Run synchronous DDGS in thread pool to avoid blocking
+            import asyncio
+            
+            def do_search():
+                with DDGS() as ddgs:
+                    # Get text results
+                    results = list(ddgs.text(query, max_results=5))
+                    return results
+            
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, do_search)
+            
+            if results:
+                formatted = ["**Web Search Results:**\n"]
+                for i, r in enumerate(results[:5], 1):
+                    title = r.get('title', 'No title')
+                    body = r.get('body', '')[:200]
+                    href = r.get('href', '')
+                    formatted.append(f"{i}. **{title}**")
+                    formatted.append(f"   {body}")
+                    if href:
+                        formatted.append(f"   Source: {href}\n")
+                return "\n".join(formatted)
+            else:
+                return f"No results found for '{query}'."
+                    
+        except Exception as e:
+            logger.error(f"Web search failed: {e}")
+            return f"Web search failed: {str(e)}"
+
+    async def _needs_web_search(self, question: str, context_snippet: str) -> bool:
+        """
+        Use gemini-pro model to quickly determine if the question needs a web search.
+        Returns True if the question requires external/real-time information.
+        """
+        # First check if context is empty - if so, more likely to need web search
+        has_context = bool(context_snippet and len(context_snippet.strip()) > 50)
+        
+        try:
+            api_key = await db.get_api_key("gemini")
+            if not api_key:
+                api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                return False  # Default to no search if we can't classify
+            
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            
+            classifier_prompt = f"""You are a classifier. Determine if this question requires REAL-TIME WEB SEARCH or can be answered from meeting context.
+
+Question: "{question}"
+
+Meeting context available: {"Yes, about: " + context_snippet[:200] if has_context else "No meeting context"}
+
+Answer ONLY "SEARCH" or "MEETING":
+- "SEARCH" if question asks about: weather, current events, latest news, stock prices, sports scores, real-time data, or anything NOT in meeting notes
+- "MEETING" if question can be answered from meeting discussion, action items, decisions, or participants"""
+
+            response = model.generate_content(classifier_prompt)
+            
+            answer = response.text.strip().upper()
+            needs_search = "SEARCH" in answer
+            logger.info(f"Web search classifier: '{answer}' -> needs_web_search={needs_search}")
+            return needs_search
+            
+        except Exception as e:
+            logger.warning(f"Web search classifier failed: {e}")
+            return False
+
+    async def chat_about_meeting(self, context: str, question: str, model: str, model_name: str, allowed_meeting_ids: Optional[List[str]] = None, history: Optional[List[Dict[str, str]]] = None):
+        """
+        Ask a question about the meeting context with cross-meeting search capabilities.
+        Returns a streaming response generator.
+        """
+        logger.info(f"Chat request: '{question}' using model {model}:{model_name}")
+        
+        # === AUTO-DETECT WEB SEARCH REQUESTS ===
+        question_lower = question.lower().strip()
+        web_search_triggers = [
+            "search on web", "find on web"
+        ]
+        
+        for trigger in web_search_triggers:
+            if trigger in question_lower:
+                logger.info(f"Auto-detected web search trigger: '{trigger}'")
+                # Extract the actual search query
+                search_query = question_lower.replace("search for", "").replace("search on web", "").replace("google", "").strip()
+                if not search_query or len(search_query) < 3:
+                    search_query = question
+                
+                # Return a generator that does the search
+                async def web_search_response():
+                    yield f"🔍 Searching web for: *{search_query}*...\n\n"
+                    result = await self.search_web(search_query)
+                    yield result
+                
+                return web_search_response()
+        
+        # === SMART CONTEXT GATING ===
+        # Only fetch linked meeting context if:
+        # 1. User has explicitly linked meetings (allowed_meeting_ids provided)
+        # 2. The classifier determines the question needs cross-meeting context
+        
+        cross_meeting_context = ""
+        
+        # Only process linked meetings if user explicitly linked them
+        if allowed_meeting_ids and len(allowed_meeting_ids) > 0:
+            # Use fast 8b model to classify if we need linked context
+            needs_linked = await self._needs_linked_context(question, context[:1000] if context else "")
+            
+            if needs_linked:
+                try:
+                    from vector_store import search_context, get_collection_stats
+                    stats = get_collection_stats()
+                    if stats.get("status") == "available":
+                        # Only 5 chunks from linked meetings (reduced from 50)
+                        results = await search_context(
+                            query=question, 
+                            n_results=5,
+                            allowed_meeting_ids=allowed_meeting_ids  # Only linked meetings, no global
+                        )
+                        logger.info(f"Linked meeting search: {len(results) if results else 0} chunks found")
+                        if results:
+                            cross_meeting_context = "\n\nRelevant Context from Linked Meetings:\n"
+                            for r in results:
+                                source = f"{r.get('meeting_title', 'Unknown')} ({r.get('meeting_date', 'Unknown')})"
+                                # Limit each chunk to 300 chars
+                                text = r.get('text', '').strip()[:300]
+                                cross_meeting_context += f"- [{source}]: {text}\n"
+                except Exception as e:
+                    logger.warning(f"Failed to fetch linked meeting context: {e}")
+            else:
+                logger.info("Classifier determined linked context not needed for this question")
+
+        # Format history - limit to 5 messages for token savings
+        history_text = ""
+        if history:
+            history_text = "\nConversation History:\n"
+            for msg in history[-5:]:  # Reduced from 10 to 5
+                role = msg.get("role", "user")
+                content = msg.get("content", "")[:300]  # Limit each message
+                history_text += f"{role.upper()}: {content}\n"
+
+        # === CONTEXT TRUNCATION - 5K LIMIT ===
+        # Reduced from 20k to 5k chars (~1250 tokens)
+        if context and len(context) > 5000:
+            logger.info(f"Truncating context from {len(context)} to 5000 chars")
+            context = context[-5000:]  # Take most recent content
+        
+        # Limit cross-meeting context to 1500 chars (3-5 chunks @ 300 chars each)
+        if cross_meeting_context and len(cross_meeting_context) > 1500:
+            cross_meeting_context = cross_meeting_context[:1500]
+
+        system_prompt = f"""
+        You are a helpful AI assistant answering questions about meetings.
+        
+        Current Meeting Context:
+        ---
+        {context}
+        ---
+
+        {cross_meeting_context}
+
+        {history_text}
+
+        Instructions:
+        1. Answer the user's question based on the provided context (Current or Linked Meetings).
+        2. If using info from 'Linked Meetings', YOU MUST CITE THE SOURCE exactly as shown in brackets.
+        3. If history is provided, use it to understand conversation context.
+        4. If the answer is NOT in any context, say you don't have that information in the meeting context.
+        5. Be concise and direct.
+        """
+
+        try:
+            # --- OLLAMA SUPPORT ---
+            if model == "ollama":
+                ollama_host = os.getenv('OLLAMA_HOST', 'http://localhost:11434')
+                client = AsyncClient(host=ollama_host)
+                message = {'role': 'user', 'content': question}
+                system_message = {'role': 'system', 'content': system_prompt}
+                
+                async def stream_ollama():
+                    async for part in await client.chat(model=model_name, messages=[system_message, message], stream=True):
+                        content = part['message']['content']
+                        yield content
+                
+                return stream_ollama()
+
+            # --- GROQ SUPPORT ---
+            elif model == "groq":
+                api_key = await db.get_api_key("groq")
+                if not api_key:
+                    api_key = os.getenv("GROQ_API_KEY")
+                if not api_key: 
+                    raise ValueError("Groq API key not found.")
+                
+                from groq import AsyncGroq
+                client = AsyncGroq(api_key=api_key)
+                
+                # Prevent TPM limit errors by restricting output tokens
+                completion_tokens = 4096
+                if "8b" in model_name: 
+                    completion_tokens = 1024
+                
+                # Initialize stream immediately to catch errors early
+                initial_stream = await client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": question}
+                    ],
+                    model=model_name,
+                    max_tokens=completion_tokens,
+                    stream=True,
+                )
+                
+                async def stream_groq(stream_iter):
+                    async for chunk in stream_iter:
+                        content = chunk.choices[0].delta.content or ""
+                        if content:
+                            yield content
+                                 
+                return stream_groq(initial_stream)
+
+            # --- OPENAI SUPPORT ---
+            elif model == "openai":
+                api_key = await db.get_api_key("openai")
+                if not api_key: raise ValueError("OpenAI API key not found")
+                
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=api_key)
+                
+                # Initialize stream immediately
+                initial_stream = await client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": question}
+                    ],
+                    model=model_name,
+                    stream=True,
+                )
+                
+                async def stream_openai(stream_iter):
+                    async for chunk in stream_iter:
+                        content = chunk.choices[0].delta.content or ""
+                        if content:
+                            yield content
+                
+                return stream_openai(initial_stream)
+            
+            # --- CLAUDE SUPPORT ---
+            elif model == "claude":
+                 api_key = await db.get_api_key("claude")
+                 if not api_key: raise ValueError("Anthropic API key not found")
+                 
+                 from anthropic import AsyncAnthropic
+                 client = AsyncAnthropic(api_key=api_key)
+                 
+                 # Initialize stream immediately
+                 initial_stream = await client.messages.create(
+                     max_tokens=1024,
+                     system=system_prompt,
+                     messages=[{"role": "user", "content": question}],
+                     model=model_name,
+                     stream=True
+                 )
+                 
+                 async def stream_claude(stream_iter):
+                     try:
+                         async for text in stream_iter.text_stream:
+                             yield text
+                     except Exception as e:
+                         yield f"Error: {str(e)}"
+                 
+                 return stream_claude(initial_stream)
+
+            # --- GEMINI SUPPORT ---
+            elif model == "gemini":
+                api_key = await db.get_api_key("gemini")
+                if not api_key:
+                    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+                if not api_key: raise ValueError("Gemini API key not found")
+                
+                import google.generativeai as genai
+                genai.configure(api_key=api_key)
+                
+                # Create generation config
+                generation_config = {
+                    "temperature": 0.7,
+                    "top_p": 0.95,
+                    "top_k": 64,
+                    "max_output_tokens": 8192,
+                }
+                
+                # Check for Flash model (higher rate limits)
+                if "flash" in model_name.lower():
+                     # No change needed really, basically same config
+                     pass
+                     
+                gen_model = genai.GenerativeModel(
+                    model_name=model_name,
+                    generation_config=generation_config,
+                    system_instruction=system_prompt
+                )
+                
+                chat_session = gen_model.start_chat(history=[])
+                
+                # Send message and get stream
+                response = chat_session.send_message(question, stream=True)
+                
+                async def stream_gemini(response_iterator):
+                    try:
+                        for chunk in response_iterator:
+                            if hasattr(chunk, 'text') and chunk.text:
+                                yield chunk.text
+                    except Exception as e:
+                        logger.error(f"Gemini streaming error: {e}", exc_info=True)
+                        yield f"\n\nError during Gemini response: {str(e)}"
+                            
+                return stream_gemini(response)
+
+            else:
+                raise ValueError(f"Unsupported chat model: {model}")
+
+        except Exception as e:
+            logger.error(f"Error in chat_about_meeting: {e}", exc_info=True)
+            # Re-raise the exception so the caller (API endpoint) can handle it 
+            # and return a proper HTTP error code (e.g. 500 or 429)
+            raise e
 
     def cleanup(self):
         """Clean up resources used by the TranscriptProcessor."""

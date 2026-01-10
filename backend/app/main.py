@@ -122,8 +122,8 @@ class ChatRequest(BaseModel):
 class CatchUpRequest(BaseModel):
     """Request model for catch-up summary"""
     transcripts: List[str]  # Current transcripts as list of strings
-    model: str = "groq"
-    model_name: str = "llama-3.1-8b-instant"
+    model: str = "gemini"
+    model_name: str = "gemini-2.0-flash"
 
 class SearchContextRequest(BaseModel):
     """Request model for cross-meeting context search"""
@@ -250,12 +250,17 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
         if not transcript.text or not transcript.text.strip():
             raise ValueError("Empty transcript text provided")
         
-        if transcript.model in ["claude", "groq", "openai"]:
+        if transcript.model in ["claude", "groq", "openai", "gemini"]:
             # Check if API key is available for cloud providers
             api_key = await processor.db.get_api_key(transcript.model)
             if not api_key:
-                provider_names = {"claude": "Anthropic", "groq": "Groq", "openai": "OpenAI"}
-                raise ValueError(f"{provider_names.get(transcript.model, transcript.model)} API key not configured. Please set your API key in the model settings.")
+                # Check for env var fallbacks
+                import os
+                if transcript.model == "gemini" and (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+                     pass
+                else:
+                    provider_names = {"claude": "Anthropic", "groq": "Groq", "openai": "OpenAI", "gemini": "Gemini"}
+                    raise ValueError(f"{provider_names.get(transcript.model, transcript.model)} API key not configured. Please set your API key in the model settings.")
 
         _, all_json_data = await processor.process_transcript(
             text=transcript.text,
@@ -524,8 +529,36 @@ Quick Catch-Up Summary:"""
                         content = chunk.choices[0].delta.content or ""
                         if content:
                             yield content
+                elif request.model == "gemini":
+                    api_key = await db.get_api_key("gemini")
+                    if not api_key:
+                        import os
+                        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+                    if not api_key:
+                        yield "Error: Gemini API key not configured"
+                        return
+
+                    import google.generativeai as genai
+                    genai.configure(api_key=api_key)
+                    
+                    # Ensure properly named model
+                    model_name = request.model_name
+                    if not model_name.startswith("gemini-"):
+                         model_name = f"gemini-{model_name}" if "gemini" not in model_name else model_name
+                    
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        response = model.generate_content(catch_up_prompt, stream=True)
+                        
+                        for chunk in response:
+                            if chunk.text:
+                                yield chunk.text
+                    except Exception as e:
+                        logger.error(f"Gemini generation error: {e}")
+                        yield f"Error generating summary with Gemini: {str(e)}"
+
                 else:
-                    yield "Error: Only Groq model is currently supported for catch-up"
+                    yield f"Error: Only Groq and Gemini models are currently supported for catch-up (requested: {request.model})"
                     
             except Exception as e:
                 logger.error(f"Error generating catch-up: {e}", exc_info=True)
