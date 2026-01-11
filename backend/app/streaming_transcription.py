@@ -143,13 +143,18 @@ class StreamingTranscriptionManager:
                 self.last_transcription_time = current_time
 
                 # Transcribe with Groq (run in thread pool since it's blocking)
+                # LLM Context Prompting: Pass last 300 chars for better entity/term accuracy
+                context_prompt = self.last_final_text[-300:] if self.last_final_text else None
+                if context_prompt:
+                    logger.debug(f"📝 Using context prompt: '{context_prompt[:50]}...'")
+                
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     self.executor,
                     self.groq.transcribe_audio_sync,
                     window_bytes,
                     "auto",  # Auto-detect language
-                    self.last_final_text[-100:] if self.last_final_text else None,
+                    context_prompt,
                     True  # translate_to_english=True
                 )
 

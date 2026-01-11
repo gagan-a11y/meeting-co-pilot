@@ -115,12 +115,17 @@ class GroqTranscriptionClient:
             # This avoids Urdu script and provides clean English output
             if translate_to_english:
                 logger.debug(f"🔄 Using Whisper TRANSLATION mode (direct to English)")
+                
+                # LLM Context Prompting: Include context for better entity/term accuracy
+                if prompt:
+                    logger.debug(f"📝 Translation with context: '{prompt[:50]}...'")
 
                 # Use the translations endpoint instead of transcriptions
                 # This translates Hindi/Urdu/any language directly to English
                 translation = self.client.audio.translations.create(
                     file=("audio.wav", wav_buffer.read()),
                     model="whisper-large-v3",
+                    prompt=prompt,  # LLM Context Prompting: Pass context for consistency
                     response_format="verbose_json",
                     temperature=0.0
                     # No language param - auto-detect source, output is always English
