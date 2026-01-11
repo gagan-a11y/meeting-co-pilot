@@ -324,7 +324,7 @@ class TranscriptProcessor:
 
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            model = genai.GenerativeModel('gemini-2.0-flash')
 
             classifier_prompt = f"""You are a classifier. Given a question about a meeting, determine if the answer REQUIRES information from OTHER/PREVIOUS meetings.
 
@@ -350,39 +350,78 @@ Answer ONLY "YES" or "NO".
 
     async def search_web(self, query: str) -> str:
         """
-        Search the web using DuckDuckGo.
-        Returns a summary of search results.
+        AI-powered web search using Gemini with grounding.
+        Returns a summarized answer with citations like Perplexity.
         """
-        logger.info(f"Web search for: {query}")
+        logger.info(f"AI Web search for: {query}")
         try:
-            # Run synchronous DDGS in thread pool to avoid blocking
-            import asyncio
+            import google.generativeai as genai
             
-            def do_search():
-                with DDGS() as ddgs:
-                    # Get text results
-                    results = list(ddgs.text(query, max_results=5))
-                    return results
+            # Get Gemini API key
+            api_key = await db.get_api_key("gemini")
+            if not api_key:
+                import os
+                api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
             
-            loop = asyncio.get_event_loop()
-            results = await loop.run_in_executor(None, do_search)
+            if not api_key:
+                return "❌ Gemini API key not configured. Please set GOOGLE_API_KEY or GEMINI_API_KEY."
             
-            if results:
-                formatted = ["**Web Search Results:**\n"]
-                for i, r in enumerate(results[:5], 1):
-                    title = r.get('title', 'No title')
-                    body = r.get('body', '')[:200]
-                    href = r.get('href', '')
-                    formatted.append(f"{i}. **{title}**")
-                    formatted.append(f"   {body}")
-                    if href:
-                        formatted.append(f"   Source: {href}\n")
-                return "\n".join(formatted)
-            else:
-                return f"No results found for '{query}'."
+            genai.configure(api_key=api_key)
+            
+            # Use Gemini with Google Search grounding
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            
+            # Create a prompt that instructs Gemini to search and summarize
+            search_prompt = f"""You are a research assistant. Search for information about the following query and provide a comprehensive, well-researched answer.
+
+Query: {query}
+
+Instructions:
+1. Search for the most relevant and up-to-date information
+2. Synthesize information from multiple reliable sources
+3. Provide specific data, benchmarks, comparisons where available
+4. Include citations with source names
+5. Be factual and objective
+6. Format your response clearly with sections if needed
+
+Provide your answer in this format:
+- Start with a brief summary
+- Include detailed findings with specific data/numbers
+- End with sources/references
+
+Remember to cite your sources inline like [Source Name] and list them at the end."""
+
+            # Generate response with grounding
+            try:
+                from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                
+                response = await model.generate_content_async(
+                    search_prompt,
+                    generation_config=genai.GenerationConfig(
+                        temperature=0.7,
+                        top_p=0.9,
+                        max_output_tokens=2048,
+                    ),
+                    safety_settings={
+                        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                    }
+                )
+                
+                if response and response.text:
+                    return f"**🔍 AI Research Results:**\n\n{response.text}"
+                else:
+                    return "No results found for this query."
+                    
+            except Exception as gen_error:
+                logger.error(f"Gemini generation failed: {gen_error}")
+                # Fallback to basic response
+                return f"Search failed: {str(gen_error)}"
                     
         except Exception as e:
-            logger.error(f"Web search failed: {e}")
+            logger.error(f"AI Web search failed: {e}")
             return f"Web search failed: {str(e)}"
 
     async def _needs_web_search(self, question: str, context_snippet: str) -> bool:
@@ -402,7 +441,7 @@ Answer ONLY "YES" or "NO".
             
             import google.generativeai as genai
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             
             classifier_prompt = f"""You are a classifier. Determine if this question requires REAL-TIME WEB SEARCH or can be answered from meeting context.
 

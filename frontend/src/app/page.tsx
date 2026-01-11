@@ -29,7 +29,7 @@ import { ButtonGroup } from '@/components/ui/button-group';
 
 
 interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openrouter';
+  provider: 'ollama' | 'groq' | 'claude' | 'openrouter' | 'gemini' | 'openai';
   model: string;
   whisperModel: string;
 }
@@ -174,11 +174,13 @@ export default function Home() {
     }
   }, [transcripts]);
 
-  const modelOptions = {
+  const modelOptions: Record<ModelConfig['provider'], string[]> = {
     ollama: models.map(model => model.name),
     claude: ['claude-3-5-sonnet-latest'],
     groq: ['llama-3.3-70b-versatile'],
     openrouter: [],
+    gemini: ['gemini-1.5-flash', 'gemini-2.0-flash'],
+    openai: ['gpt-4o', 'gpt-4-turbo'],
   };
 
   useEffect(() => {
@@ -427,7 +429,10 @@ export default function Home() {
 
       console.log(`💾 Saving ${freshTranscripts.length} transcripts via HTTP API...`);
 
-      // Call backend API directly
+      // Get default template from localStorage or use 'standard_meeting'
+      const defaultTemplate = localStorage.getItem('selectedTemplate') || 'standard_meeting';
+
+      // Call backend API directly - backend will automatically generate notes based on template
       const response = await fetch('http://localhost:5167/save-transcript', {
         method: 'POST',
         headers: {
@@ -444,6 +449,7 @@ export default function Home() {
             duration: 0,
           })),
           folder_path: null,
+          template_id: defaultTemplate,
         }),
       });
 
@@ -467,55 +473,17 @@ export default function Home() {
         title: meetingTitle || 'Web Audio Meeting'
       });
 
-      toast.success('Recording saved! Generating AI summary...', {
-        description: `${freshTranscripts.length} transcript segments saved. Extracting action items and decisions...`,
+      toast.success('Recording saved! Generating meeting notes...', {
+        description: `Notes are being generated automatically based on ${defaultTemplate} template.`,
         duration: 5000,
       });
 
-      // Automatically trigger LLM post-processing to extract action items and decisions
-      console.log('🤖 [AI] Starting automatic LLM post-processing...');
-      setSummaryStatus('summarizing');
-
-      try {
-        const processResponse = await fetch(`${serverAddress}/process-transcript`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: fullTranscript,
-            model: modelConfig.provider,
-            modelName: modelConfig.model,
-            chunkSize: 40000,
-            overlap: 1000,
-            customPrompt: 'Extract key decisions, action items, and next steps from this meeting transcript.',
-          })
-        });
-
-        if (processResponse.ok) {
-          const result = await processResponse.json();
-          console.log('🤖 [AI] LLM processing started, process ID:', result.process_id);
-
-          // Don't wait here - the meeting-details page will poll for results
-          toast.success('AI processing started!', {
-            description: 'View meeting details to see extracted action items and decisions.',
-            action: {
-              label: 'View Meeting',
-              onClick: () => {
-                router.push(`/meeting-details?id=${meetingId}`);
-              }
-            },
-            duration: 10000,
-          });
-        }
-      } catch (aiError) {
-        console.warn('⚠️ [AI] LLM post-processing failed:', aiError);
-        // Don't fail the whole save if AI processing fails
-      }
-
-      // Auto-navigate after delay
+      // Notes are now generated automatically by the backend
+      // Navigate to meeting details page after a short delay
       setTimeout(() => {
         router.push(`/meeting-details?id=${meetingId}`);
         Analytics.trackPageView('meeting_details');
-      }, 3000);
+      }, 1500);
 
       setMeetings([{ id: meetingId, title: meetingTitle || 'Web Audio Meeting' }, ...meetings]);
 
@@ -1465,7 +1433,7 @@ export default function Home() {
                               setModelConfig({
                                 ...modelConfig,
                                 provider,
-                                model: modelOptions[provider][0]
+                                model: (modelOptions[provider] || modelOptions.ollama)[0]
                               });
                             }}
                           >
@@ -1480,7 +1448,7 @@ export default function Home() {
                             value={modelConfig.model}
                             onChange={(e) => setModelConfig(prev => ({ ...prev, model: e.target.value }))}
                           >
-                            {modelOptions[modelConfig.provider].map(model => (
+                            {(modelOptions[modelConfig.provider] || []).map((model: string) => (
                               <option key={model} value={model}>
                                 {model}
                               </option>

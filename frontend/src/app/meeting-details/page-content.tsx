@@ -17,6 +17,8 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 
+import { useRouter } from 'next/navigation';
+
 export default function PageContent({
   meeting,
   summaryData,
@@ -30,6 +32,8 @@ export default function PageContent({
   onAutoGenerateComplete?: () => void;
   onMeetingUpdated?: () => Promise<void>;
 }) {
+  const router = useRouter(); // Initialize router
+
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
     summaryDataKeys: summaryData ? Object.keys(summaryData) : null,
@@ -78,22 +82,77 @@ export default function PageContent({
     Analytics.trackPageView('meeting_details');
   }, []);
 
-  // Auto-generate summary when flag is set
+  // Track if initial generation has been triggered
+  const [hasTriggeredInitialGeneration, setHasTriggeredInitialGeneration] = useState(false);
+
+  // Auto-generate notes on page load when transcripts exist but no summary
   useEffect(() => {
-    const autoGenerate = async () => {
-      if (shouldAutoGenerate && meetingData.transcripts.length > 0) {
-        console.log(`🤖 Auto-generating summary with ${modelConfig.modelConfig.provider}/${modelConfig.modelConfig.model}...`);
-        await summaryGeneration.handleGenerateSummary('');
+    const transcriptsExist = meetingData.transcripts && meetingData.transcripts.length > 0;
+    const noSummaryExists = !meetingData.aiSummary;
+    const notProcessing = summaryGeneration.summaryStatus === 'idle' || summaryGeneration.summaryStatus === 'error';
+    const modelReady = !modelConfig.isLoading && modelConfig.modelConfig.provider;
 
-        // Notify parent that auto-generation is complete
-        if (onAutoGenerateComplete) {
-          onAutoGenerateComplete();
+    if (transcriptsExist && noSummaryExists && notProcessing && modelReady && !hasTriggeredInitialGeneration) {
+      console.log('🚀 Auto-generating notes on page load with template:', templates.selectedTemplate);
+      setHasTriggeredInitialGeneration(true);
+      // Slight delay to ensure everything is ready
+      setTimeout(() => {
+        summaryGeneration.handleGenerateSummary('');
+      }, 500);
+    }
+  }, [
+    meetingData.transcripts,
+    meetingData.aiSummary,
+    summaryGeneration.summaryStatus,
+    modelConfig.isLoading,
+    modelConfig.modelConfig.provider,
+    templates.selectedTemplate,
+    hasTriggeredInitialGeneration,
+    summaryGeneration.handleGenerateSummary
+  ]);
+
+  // Auto-regenerate notes when template changes
+  useEffect(() => {
+    if (templates.templateChanged && meetingData.transcripts && meetingData.transcripts.length > 0) {
+      console.log('🔄 Template changed, regenerating notes with:', templates.selectedTemplate);
+      // Clear the current summary to show loading state
+      meetingData.setAiSummary(null);
+      // Trigger regeneration
+      setTimeout(() => {
+        summaryGeneration.handleGenerateSummary('');
+        templates.acknowledgeTemplateChange();
+      }, 100);
+    }
+  }, [
+    templates.templateChanged,
+    templates.selectedTemplate,
+    templates.acknowledgeTemplateChange,
+    meetingData.transcripts,
+    meetingData.setAiSummary,
+    summaryGeneration.handleGenerateSummary
+  ]);
+
+  // Poll for summary if processing (notes are generating)
+  useEffect(() => {
+    if (summaryGeneration.summaryStatus === 'processing' || summaryGeneration.summaryStatus === 'summarizing') {
+      const pollInterval = setInterval(async () => {
+        console.log(`🔄 Polling for summary for meeting ${meeting.id}...`);
+        if (onMeetingUpdated) {
+          await onMeetingUpdated();
         }
-      }
-    };
+      }, 3000); // Poll every 3 seconds
 
-    autoGenerate();
-  }, [shouldAutoGenerate]); // Only trigger when flag changes
+      // Stop polling after 2 minutes
+      const timeout = setTimeout(() => {
+        clearInterval(pollInterval);
+      }, 120000);
+
+      return () => {
+        clearInterval(pollInterval);
+        clearTimeout(timeout);
+      };
+    }
+  }, [meeting.id, summaryGeneration.summaryStatus, onMeetingUpdated]);
 
   return (
     <motion.div
@@ -146,6 +205,7 @@ export default function PageContent({
           selectedTemplate={templates.selectedTemplate}
           onTemplateSelect={templates.handleTemplateSelection}
           isModelConfigLoading={modelConfig.isLoading}
+          onDeleteMeeting={() => meetingOperations.handleDeleteMeeting(router)}
         />
 
       </div>

@@ -66,9 +66,6 @@ export function useSummaryGeneration({
       setSummaryStatus(isRegeneration ? 'regenerating' : 'processing');
       setSummaryError(null);
 
-      // Fetch server address from Sidebar context (assuming it's available in scope or passed as prop)
-      // Since it's not in props, we default to localhost:5167 or use a hardcoded value for now 
-      // ideally useSidebar would return serverAddress but useSummaryGeneration calls useSidebar already.
       const serverAddress = 'http://localhost:5167';
 
       try {
@@ -80,32 +77,33 @@ export function useSummaryGeneration({
           setOriginalTranscript(transcriptText);
         }
 
-        console.log('Processing transcript with template:', selectedTemplate);
+        console.log('Generating notes with Gemini using template:', selectedTemplate);
 
-        // Process transcript
-        const response = await fetch(`${serverAddress}/process-transcript`, {
+        // Use the new /meetings/{id}/generate-notes endpoint which uses Gemini
+        const response = await fetch(`${serverAddress}/meetings/${meeting.id}/generate-notes`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            text: transcriptText,
-            model: modelConfig.provider,
-            modelName: modelConfig.model,
-            meetingId: meeting.id,
-            chunkSize: 40000,
-            overlap: 1000,
-            customPrompt: customPrompt,
-            templateId: selectedTemplate,
+            meeting_id: meeting.id,
+            template_id: selectedTemplate,
+            model: 'gemini',
+            model_name: 'gemini-2.0-flash',
+            custom_context: customPrompt || '',  // Add context from user input
           })
         });
 
-        if (!response.ok) throw new Error('Failed to start processing');
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Failed to start notes generation');
+        }
         const result = await response.json();
 
-      const process_id = result.process_id;
-      console.log('Process ID:', process_id);
+      // The new endpoint returns immediately with status: "processing"
+      // We need to poll for the result using the meeting_id
+      console.log('Notes generation started:', result);
 
-      // Start global polling via context
-      startSummaryPolling(meeting.id, process_id, async (pollingResult) => {
+      // Start global polling via context - use meeting.id since new endpoint doesn't return process_id
+      startSummaryPolling(meeting.id, meeting.id, async (pollingResult) => {
         console.log('Summary status:', pollingResult);
 
         // Handle errors
@@ -259,6 +257,7 @@ export function useSummaryGeneration({
   ]);
 
   // Public API: Generate summary from transcripts
+  // ALWAYS uses Gemini for best quality notes generation
   const handleGenerateSummary = useCallback(async (customPrompt: string = '') => {
     // Check if model config is still loading
     if (isModelConfigLoading) {
@@ -274,41 +273,19 @@ export function useSummaryGeneration({
       return;
     }
 
-    console.log('🚀 Starting summary generation with config:', {
-      provider: modelConfig.provider,
-      model: modelConfig.model,
+    // Always use Gemini for notes generation (best quality)
+    const notesProvider = 'gemini';
+    const notesModel = 'gemini-2.0-flash';
+    
+    console.log('🚀 Starting notes generation with Gemini:', {
+      provider: notesProvider,
+      model: notesModel,
       template: selectedTemplate
     });
 
-    // Check if Ollama provider has models available
-    if (modelConfig.provider === 'ollama') {
-      try {
-        // Check Ollama models via HTTP
-        const response = await fetch('http://localhost:11434/api/tags');
-        if (!response.ok) throw new Error('Failed to fetch Ollama models');
-        const data = await response.json();
-        const models = data.models || [];
-
-        if (!models || models.length === 0) {
-          toast.error(
-            'No Ollama models found. Please download gemma3:1b from Model Settings.',
-            { duration: 5000 }
-          );
-          return;
-        }
-      } catch (error) {
-        console.error('Error checking Ollama models:', error);
-        toast.error(
-          'Failed to check Ollama models. Please ensure Ollama is running and download a model from Settings.',
-          { duration: 5000 }
-        );
-        return;
-      }
-    }
-
     const fullTranscript = transcripts.map(t => t.text).join('\n');
     await processSummary({ transcriptText: fullTranscript, customPrompt });
-  }, [transcripts, processSummary, modelConfig, isModelConfigLoading, selectedTemplate]);
+  }, [transcripts, processSummary, isModelConfigLoading, selectedTemplate]);
 
   // Public API: Regenerate summary from original transcript
   const handleRegenerateSummary = useCallback(async () => {

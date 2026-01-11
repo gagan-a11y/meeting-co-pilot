@@ -366,13 +366,15 @@ class DatabaseManager:
             await conn.commit()
 
     async def get_transcript_data(self, meeting_id: str):
-        """Get transcript data for a meeting"""
+        """Get transcript/summary process data for a meeting"""
         async with self._get_connection() as conn:
+            # First check summary_processes table directly
             async with conn.execute("""
-                SELECT t.*, p.status, p.result, p.error 
-                FROM transcript_chunks t 
-                JOIN summary_processes p ON t.meeting_id = p.meeting_id 
-                WHERE t.meeting_id = ?
+                SELECT meeting_id, status, result, error, start_time, end_time
+                FROM summary_processes 
+                WHERE meeting_id = ?
+                ORDER BY start_time DESC
+                LIMIT 1
             """, (meeting_id,)) as cursor:
                 row = await cursor.fetchone()
                 if row:

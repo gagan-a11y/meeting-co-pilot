@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, X, Link as LinkIcon, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Bot, User, Loader2, X, Link as LinkIcon, ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { Transcript } from '@/types';
 import { MeetingSelector } from './MeetingSelector';
@@ -15,6 +15,89 @@ interface ChatInterfaceProps {
     currentTranscripts?: Transcript[];
 }
 
+// Simple markdown renderer component
+function MarkdownContent({ content }: { content: string }) {
+    const renderMarkdown = (text: string) => {
+        const lines = text.split('\n');
+        const elements: React.ReactNode[] = [];
+        let listItems: string[] = [];
+        let listType: 'ul' | 'ol' | null = null;
+
+        const flushList = () => {
+            if (listItems.length > 0 && listType) {
+                const ListTag = listType;
+                elements.push(
+                    <ListTag key={elements.length} className={listType === 'ul' ? 'list-disc ml-4 my-2 space-y-1' : 'list-decimal ml-4 my-2 space-y-1'}>
+                        {listItems.map((item, i) => <li key={i} className="text-sm">{renderInline(item)}</li>)}
+                    </ListTag>
+                );
+                listItems = [];
+                listType = null;
+            }
+        };
+
+        const renderInline = (line: string): React.ReactNode => {
+            // Bold: **text** or __text__
+            line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            line = line.replace(/__(.+?)__/g, '<strong>$1</strong>');
+            // Italic: *text* or _text_
+            line = line.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            // Code: `code`
+            line = line.replace(/`([^`]+)`/g, '<code class="bg-zinc-200 dark:bg-zinc-700 px-1 rounded text-xs">$1</code>');
+            // Links: [text](url)
+            line = line.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-blue-500 underline">$1</a>');
+
+            return <span dangerouslySetInnerHTML={{ __html: line }} />;
+        };
+
+        lines.forEach((line, index) => {
+            // Headers
+            if (line.startsWith('### ')) {
+                flushList();
+                elements.push(<h3 key={index} className="font-bold text-base mt-3 mb-1 text-zinc-900 dark:text-zinc-100">{renderInline(line.slice(4))}</h3>);
+            } else if (line.startsWith('## ')) {
+                flushList();
+                elements.push(<h2 key={index} className="font-bold text-lg mt-4 mb-2 text-zinc-900 dark:text-zinc-100">{renderInline(line.slice(3))}</h2>);
+            } else if (line.startsWith('# ')) {
+                flushList();
+                elements.push(<h1 key={index} className="font-bold text-xl mt-4 mb-2 text-zinc-900 dark:text-zinc-100">{renderInline(line.slice(2))}</h1>);
+            }
+            // Bullet lists
+            else if (line.match(/^[\*\-]\s+/)) {
+                if (listType !== 'ul') flushList();
+                listType = 'ul';
+                listItems.push(line.replace(/^[\*\-]\s+/, ''));
+            }
+            // Numbered lists
+            else if (line.match(/^\d+\.\s+/)) {
+                if (listType !== 'ol') flushList();
+                listType = 'ol';
+                listItems.push(line.replace(/^\d+\.\s+/, ''));
+            }
+            // Horizontal rule
+            else if (line.match(/^---+$/)) {
+                flushList();
+                elements.push(<hr key={index} className="my-3 border-zinc-300 dark:border-zinc-700" />);
+            }
+            // Regular paragraph
+            else if (line.trim()) {
+                flushList();
+                elements.push(<p key={index} className="text-sm my-1">{renderInline(line)}</p>);
+            }
+            // Empty line
+            else {
+                flushList();
+                elements.push(<div key={index} className="h-2" />);
+            }
+        });
+
+        flushList();
+        return elements;
+    };
+
+    return <div className="markdown-content">{renderMarkdown(content)}</div>;
+}
+
 export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatInterfaceProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
@@ -22,9 +105,40 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const { serverAddress } = useSidebar();
 
+    // Resizable panel state
+    const [panelWidth, setPanelWidth] = useState(450);
+    const isResizing = useRef(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
     // Scoped Search State
     const [showLinkContext, setShowLinkContext] = useState(false);
     const [linkedMeetingIds, setLinkedMeetingIds] = useState<string[]>([]);
+
+    // Handle resize
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        isResizing.current = true;
+        e.preventDefault();
+    }, []);
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isResizing.current) return;
+            const newWidth = window.innerWidth - e.clientX;
+            setPanelWidth(Math.max(350, Math.min(800, newWidth)));
+        };
+
+        const handleMouseUp = () => {
+            isResizing.current = false;
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, []);
 
     // Construct context from live transcripts if available
     const getContextFromTranscripts = () => {
@@ -74,8 +188,8 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
             setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
 
             // Use configured model or default to Gemini Flash
-            const provider = modelConfig?.provider || 'gemini';
-            const modelName = modelConfig?.model || 'gemini-3-flash-preview';
+            const provider = 'gemini';
+            const modelName = 'gemini-2.0-flash';
 
             const contextText = getContextFromTranscripts();
 
@@ -127,7 +241,19 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
     };
 
     return (
-        <div className="flex flex-col h-full bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800 w-[400px] shadow-xl fixed right-0 top-0 bottom-0 z-50">
+        <div
+            ref={containerRef}
+            className="flex flex-col h-full bg-white dark:bg-zinc-900 border-l border-zinc-200 dark:border-zinc-800 shadow-xl fixed right-0 top-0 bottom-0 z-50"
+            style={{ width: `${panelWidth}px` }}
+        >
+            {/* Resize handle */}
+            <div
+                className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-blue-500/20 flex items-center justify-center group"
+                onMouseDown={handleMouseDown}
+            >
+                <GripVertical className="w-3 h-3 text-zinc-400 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+
             {/* Header */}
             <div className="flex flex-col border-b border-zinc-200 dark:border-zinc-800">
                 <div className="flex items-center justify-between p-4 pb-2">
@@ -181,6 +307,7 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
                             </p>
                         )}
                         <p className="text-xs text-zinc-400">"What were the key decisions?"</p>
+                        <p className="text-xs text-zinc-400">"search on web [your query]"</p>
                     </div>
                 )}
 
@@ -196,28 +323,13 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
                             {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                         </div>
                         <div className={`
-              rounded-lg p-3 max-w-[85%] text-sm whitespace-pre-wrap
+              rounded-lg p-3 max-w-[90%]
               ${msg.role === 'user'
-                                ? 'bg-blue-500 text-white'
+                                ? 'bg-blue-500 text-white text-sm'
                                 : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200'}
             `}>
                             {msg.role === 'assistant' ? (
-                                <div>
-                                    {msg.content.split('\n').map((line, i) => {
-                                        // Pattern: [Source: Meeting Name (Date)]
-                                        const citationMatch = line.match(/^\[Source: (.*?) \((.*?)\)\]/);
-                                        if (citationMatch) {
-                                            return (
-                                                <div key={i} className="flex items-center gap-1.5 mt-2 mb-1 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded w-fit border border-blue-100 dark:border-blue-800">
-                                                    <span className="font-semibold">Source:</span>
-                                                    <span>{citationMatch[1]}</span>
-                                                    <span className="opacity-75">({citationMatch[2]})</span>
-                                                </div>
-                                            );
-                                        }
-                                        return <div key={i} className="min-h-[1.2em]">{line}</div>;
-                                    })}
-                                </div>
+                                <MarkdownContent content={msg.content} />
                             ) : (
                                 msg.content
                             )}
@@ -234,7 +346,7 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Ask a question..."
+                        placeholder="Ask a question... (or 'search on web [query]')"
                         className="w-full pl-4 pr-10 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-zinc-100"
                         disabled={isLoading}
                     />
@@ -250,3 +362,4 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
         </div>
     );
 }
+

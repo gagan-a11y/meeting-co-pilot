@@ -88,6 +88,7 @@ class SaveTranscriptRequest(BaseModel):
     meeting_title: str
     transcripts: List[Transcript]
     folder_path: Optional[str] = None  # NEW: Path to meeting folder (for new folder structure)
+    template_id: Optional[str] = "standard_meeting"  # Template for note generation
 
 class SaveModelConfigRequest(BaseModel):
     provider: str
@@ -109,6 +110,7 @@ class TranscriptRequest(BaseModel):
     chunk_size: Optional[int] = 5000
     overlap: Optional[int] = 1000
     custom_prompt: Optional[str] = "Generate a summary of the meeting transcript."
+    templateId: Optional[str] = "standard_meeting"  # Template for note generation
 
 class ChatRequest(BaseModel):
     meeting_id: str
@@ -130,6 +132,14 @@ class SearchContextRequest(BaseModel):
     query: str
     n_results: int = 5
     allowed_meeting_ids: Optional[List[str]] = None  # None = search all meetings
+
+class GenerateNotesRequest(BaseModel):
+    """Request model for generating detailed meeting notes."""
+    meeting_id: str
+    template_id: str = "standard_meeting"
+    model: str = "gemini"
+    model_name: str = "gemini-2.0-flash"
+    custom_context: str = ""  # User-provided context for better note generation
 
 
 class SummaryProcessor:
@@ -241,6 +251,31 @@ async def delete_meeting(data: DeleteMeetingRequest):
         logger.error(f"Error deleting meeting: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class SaveSummaryRequest(BaseModel):
+    meeting_id: str
+    summary: dict
+
+
+@app.post("/save-summary")
+async def save_summary(data: SaveSummaryRequest):
+    """Save or update meeting summary/notes"""
+    try:
+        logger.info(f"Saving summary for meeting {data.meeting_id}")
+        
+        # Update the summary_processes table with the new content
+        await processor.db.update_process(
+            meeting_id=data.meeting_id,
+            status="completed",
+            result=data.summary
+        )
+        
+        logger.info(f"Successfully saved summary for meeting {data.meeting_id}")
+        return {"message": "Summary saved successfully"}
+    except Exception as e:
+        logger.error(f"Error saving summary: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 async def process_transcript_background(process_id: str, transcript: TranscriptRequest, custom_prompt: str):
     """Background task to process transcript"""
     try:
@@ -262,13 +297,19 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
                     provider_names = {"claude": "Anthropic", "groq": "Groq", "openai": "OpenAI", "gemini": "Gemini"}
                     raise ValueError(f"{provider_names.get(transcript.model, transcript.model)} API key not configured. Please set your API key in the model settings.")
 
+        # Use template-specific prompt if templateId is provided
+        template_prompt = custom_prompt
+        template_id = getattr(transcript, 'templateId', None) or getattr(transcript, 'template_id', None)
+        if template_id:
+            template_prompt = get_template_prompt(template_id)
+        
         _, all_json_data = await processor.process_transcript(
             text=transcript.text,
             model=transcript.model,
             model_name=transcript.model_name,
             chunk_size=transcript.chunk_size,
             overlap=transcript.overlap,
-            custom_prompt=custom_prompt
+            custom_prompt=template_prompt
         )
 
         # Create final summary structure by aggregating chunk results
@@ -376,7 +417,10 @@ async def process_transcript_api(
             transcript.overlap
         )
 
+        # Use template-specific prompt if templateId is provided, otherwise use custom_prompt
         custom_prompt = transcript.custom_prompt
+        if hasattr(transcript, 'templateId') and transcript.templateId and not custom_prompt:
+            custom_prompt = get_template_prompt(transcript.templateId)
 
         # Start background processing
         background_tasks.add_task(
@@ -393,6 +437,117 @@ async def process_transcript_api(
 
     except Exception as e:
         logger.error(f"Error in process_transcript_api: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-detailed-notes")
+async def generate_detailed_notes(request: GenerateNotesRequest, background_tasks: BackgroundTasks):
+    """
+    Generates detailed meeting notes using Gemini, saves them, and returns the result.
+    This is intended for automatic, high-quality note generation post-meeting.
+    Uses templates for structured output based on meeting type.
+    """
+    try:
+        logger.info(f"Generating detailed notes for meeting {request.meeting_id} using template {request.template_id}")
+
+        # 1. Fetch meeting transcripts from the database
+        meeting_data = await db.get_meeting(request.meeting_id)
+        if not meeting_data or not meeting_data.get('transcripts'):
+            raise HTTPException(status_code=404, detail="Meeting or transcripts not found.")
+
+        transcripts = meeting_data['transcripts']
+        full_transcript_text = "\n".join([t['text'] for t in transcripts])
+
+        if not full_transcript_text.strip():
+            raise HTTPException(status_code=400, detail="Transcript text is empty.")
+
+        meeting_title = meeting_data.get('title', 'Untitled Meeting')
+        
+        # 2. Start background processing (non-blocking)
+        background_tasks.add_task(
+            generate_notes_with_gemini_background,
+            request.meeting_id,
+            full_transcript_text,
+            request.template_id,
+            meeting_title
+        )
+
+        return JSONResponse(content={
+            "message": "Notes generation started",
+            "meeting_id": request.meeting_id,
+            "template_id": request.template_id,
+            "status": "processing"
+        })
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error starting notes generation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/meetings/{meeting_id}/generate-notes")
+async def generate_notes_for_meeting(meeting_id: str, request: GenerateNotesRequest = None, background_tasks: BackgroundTasks = None):
+    """
+    Generate meeting notes for a specific meeting using the selected template.
+    This endpoint is designed to be called from the Meeting Details page.
+    
+    Path Parameters:
+        meeting_id: The ID of the meeting to generate notes for
+        
+    Body Parameters (optional):
+        template_id: The template to use for note generation (default: standard_meeting)
+        model: The AI model provider (default: gemini)
+        model_name: The specific model name (default: gemini-2.0-flash)
+    """
+    try:
+        # Use path parameter if no request body provided
+        actual_meeting_id = meeting_id
+        template_id = "standard_meeting"
+        model_name = "gemini-2.0-flash"
+        custom_context = ""
+        
+        if request:
+            template_id = request.template_id or "standard_meeting"
+            model_name = request.model_name or "gemini-2.0-flash"
+            custom_context = request.custom_context or ""
+            # If request has meeting_id, use path param anyway for consistency
+        
+        logger.info(f"Generating notes for meeting {actual_meeting_id} using template {template_id}")
+
+        # 1. Fetch meeting transcripts from the database
+        meeting_data = await db.get_meeting(actual_meeting_id)
+        if not meeting_data or not meeting_data.get('transcripts'):
+            raise HTTPException(status_code=404, detail="Meeting or transcripts not found.")
+
+        transcripts = meeting_data['transcripts']
+        full_transcript_text = "\n".join([t['text'] for t in transcripts])
+
+        if not full_transcript_text.strip():
+            raise HTTPException(status_code=400, detail="Transcript text is empty.")
+
+        meeting_title = meeting_data.get('title', 'Untitled Meeting')
+        
+        # 2. Start background processing (non-blocking)
+        background_tasks.add_task(
+            generate_notes_with_gemini_background,
+            actual_meeting_id,
+            full_transcript_text,
+            template_id,
+            meeting_title,
+            custom_context
+        )
+
+        return JSONResponse(content={
+            "message": "Notes generation started",
+            "meeting_id": actual_meeting_id,
+            "template_id": template_id,
+            "status": "processing"
+        })
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error starting notes generation for meeting {meeting_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -657,6 +812,11 @@ async def get_summary(meeting_id: str):
         if isinstance(summary_data, dict) and status == "completed":
             # Add MeetingName to transformed data
             transformed_data["MeetingName"] = summary_data.get("MeetingName", "")
+            
+            # Pass through markdown format if present (new notes generation flow)
+            if "markdown" in summary_data:
+                transformed_data["markdown"] = summary_data["markdown"]
+                logger.info(f"Passing through markdown content for meeting {meeting_id}")
 
             # Map backend sections to frontend sections
             section_mapping = {
@@ -752,12 +912,171 @@ async def get_summary(meeting_id: str):
             }
         )
 
+def get_template_prompt(template_id: str) -> str:
+    """Generate template-specific prompt based on template ID"""
+    templates = {
+        "standard_meeting": """Generate comprehensive meeting notes with:
+        - Key discussion points and topics covered
+        - Important decisions made
+        - Action items with assignees (if mentioned)
+        - Next steps and deadlines
+        - Participants and their contributions""",
+        
+        "daily_standup": """Generate a concise daily standup summary with:
+        - What each person accomplished since last standup
+        - What each person plans to work on today
+        - Blockers or impediments mentioned
+        - Key updates or announcements
+        Focus on brevity and clarity.""",
+        
+        "interview": """Generate an interview summary with:
+        - Candidate background and qualifications discussed
+        - Technical skills and experience evaluated
+        - Behavioral questions and responses
+        - Key strengths and concerns
+        - Interviewer impressions
+        - Next steps in the hiring process""",
+        
+        "brainstorming": """Generate a brainstorming session summary with:
+        - All ideas and suggestions proposed
+        - Themes or categories of ideas
+        - Promising concepts to explore further
+        - Voting or prioritization results (if any)
+        - Action items for follow-up
+        - Participants' contributions to each idea""",
+        
+        "standup": """Generate a standup meeting summary with:
+        - Updates from each participant (what they accomplished, what they're working on)
+        - Blockers and dependencies that need attention
+        - Key decisions made during the standup
+        - Action items with owners and deadlines
+        - Any announcements or upcoming events mentioned
+        Focus on quick, actionable items. Keep the summary concise and scannable."""
+    }
+    
+    return templates.get(template_id, templates["standard_meeting"])
+
+async def generate_notes_with_gemini_background(meeting_id: str, transcript_text: str, template_id: str, meeting_title: str, custom_context: str = ""):
+    """Background task to generate meeting notes using Gemini"""
+    process_id = None
+    try:
+        logger.info(f"Starting Gemini note generation for meeting: {meeting_id} with template: {template_id}")
+        if custom_context:
+            logger.info(f"Using custom context: {custom_context[:100]}...")
+        
+        # Create process for tracking
+        process_id = await processor.db.create_process(meeting_id)
+        await processor.db.update_process(process_id, status="processing", result=None)
+        
+        # Get Gemini API key
+        api_key = await db.get_api_key("gemini")
+        if not api_key:
+            import os
+            api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            error_msg = "Gemini API key not configured. Please set GOOGLE_API_KEY or GEMINI_API_KEY environment variable."
+            logger.error(error_msg)
+            await processor.db.update_process(process_id, status="failed", error=error_msg)
+            return
+        
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        
+        # Use gemini-2.0-flash for best accuracy and stability
+        model_name = "gemini-2.0-flash"
+        model = genai.GenerativeModel(model_name)
+        
+        # Get template-specific instructions
+        template_instructions = get_template_prompt(template_id)
+        
+        # Build context section if provided
+        context_section = ""
+        if custom_context and custom_context.strip():
+            context_section = f"""
+User-Provided Context:
+---
+{custom_context}
+---
+Use this context to better understand the meeting participants, purpose, and important topics to focus on.
+
+"""
+        
+        # Create comprehensive prompt for note generation
+        prompt = f"""You are an expert meeting notes generator. Generate well-structured meeting notes in Markdown format based on the following transcript.
+
+Template Instructions:
+{template_instructions}
+
+{context_section}IMPORTANT: Generate the notes in Markdown format with the following structure:
+- Use proper headings (## for main sections, ### for subsections)
+- Use bullet points for lists
+- Use bold for important items (like action items, decisions)
+- Include participants if mentioned
+- Be concise but comprehensive
+
+Meeting Title: {meeting_title}
+
+Transcript:
+---
+{transcript_text}
+---
+
+Generate comprehensive meeting notes now in Markdown format:"""
+        
+        # Generate notes with Gemini
+        response = await model.generate_content_async(prompt)
+        
+        if not response or not response.text:
+            error_msg = "Gemini returned empty response"
+            logger.error(error_msg)
+            await processor.db.update_process(process_id, status="failed", error=error_msg)
+            return
+        
+        markdown_notes = response.text.strip()
+        
+        # Extract meeting title if generated
+        meeting_name = meeting_title
+        if "Meeting Title:" in markdown_notes or "# " in markdown_notes:
+            lines = markdown_notes.split('\n')
+            for line in lines[:5]:  # Check first few lines
+                if line.startswith('# ') and not line.startswith('## '):
+                    meeting_name = line.replace('# ', '').strip()
+                    break
+        
+        # Format the summary in the expected structure
+        summary_data = {
+            "markdown": markdown_notes,
+            "MeetingName": meeting_name
+        }
+        
+        # Update meeting name if different
+        if meeting_name and meeting_name != meeting_title:
+            await processor.db.update_meeting_name(meeting_id, meeting_name)
+        
+        # Save the summary
+        await processor.db.update_process(process_id, status="completed", result=json.dumps(summary_data))
+        logger.info(f"✅ Successfully generated notes for meeting: {meeting_id} using Gemini {model_name}")
+        
+    except Exception as e:
+        error_msg = f"Error generating notes with Gemini: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        try:
+            if process_id:
+                await processor.db.update_process(process_id, status="failed", error=error_msg)
+            else:
+                # Create process just to track the failure
+                process_id = await processor.db.create_process(meeting_id)
+                await processor.db.update_process(process_id, status="failed", error=error_msg)
+        except Exception as db_e:
+            logger.error(f"Failed to update DB status to failed: {db_e}", exc_info=True)
+
 @app.post("/save-transcript")
-async def save_transcript(request: SaveTranscriptRequest):
-    """Save transcript segments for a meeting without processing"""
+async def save_transcript(request: SaveTranscriptRequest, background_tasks: BackgroundTasks):
+    """Save transcript segments for a meeting and automatically generate notes based on template"""
     try:
         logger.info(f"Received save-transcript request for meeting: {request.meeting_title}")
         logger.info(f"Number of transcripts to save: {len(request.transcripts)}")
+        logger.info(f"Template ID: {request.template_id}")
 
         # Log first transcript timestamps for debugging
         if request.transcripts:
@@ -771,6 +1090,7 @@ async def save_transcript(request: SaveTranscriptRequest):
         await db.save_meeting(meeting_id, request.meeting_title, folder_path=request.folder_path)
 
         # Save each transcript segment with NEW timestamp fields for playback sync
+        full_transcript_text = ""
         for transcript in request.transcripts:
             await db.save_meeting_transcript(
                 meeting_id=meeting_id,
@@ -784,6 +1104,7 @@ async def save_transcript(request: SaveTranscriptRequest):
                 audio_end_time=transcript.audio_end_time,
                 duration=transcript.duration
             )
+            full_transcript_text += transcript.text + "\n"
 
         logger.info("Transcripts saved successfully")
         
@@ -800,6 +1121,24 @@ async def save_transcript(request: SaveTranscriptRequest):
             logger.info(f"✅ Stored {chunks_stored} embedding chunks for cross-meeting search")
         except Exception as e:
             logger.warning(f"⚠️ Failed to store embeddings (non-critical): {e}")
+        
+        # Automatically trigger note generation using Gemini
+        if full_transcript_text.strip():
+            try:
+                logger.info(f"Auto-generating notes with Gemini using template: {request.template_id}")
+                
+                # Use Gemini for note generation (always use Gemini as specified)
+                background_tasks.add_task(
+                    generate_notes_with_gemini_background,
+                    meeting_id,
+                    full_transcript_text,
+                    request.template_id or "standard_meeting",
+                    request.meeting_title
+                )
+                logger.info(f"Started automatic note generation with Gemini for meeting: {meeting_id}")
+            except Exception as e:
+                logger.error(f"Error starting automatic note generation: {str(e)}", exc_info=True)
+                # Don't fail the save if auto-generation fails
         
         return {"status": "success", "message": "Transcript saved successfully", "meeting_id": meeting_id}
     except Exception as e:

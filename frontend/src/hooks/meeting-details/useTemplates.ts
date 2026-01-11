@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
@@ -10,6 +10,8 @@ export function useTemplates() {
     description: string;
   }>>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('standard_meeting');
+  const [templateChanged, setTemplateChanged] = useState<boolean>(false);
+  const previousTemplateRef = useRef<string | null>(null);
 
   // Fetch available templates on mount
   useEffect(() => {
@@ -18,23 +20,46 @@ export function useTemplates() {
       { id: 'standard_meeting', name: 'Standard Meeting', description: 'Standard meeting summary with key points and action items' },
       { id: 'daily_standup', name: 'Daily Standup', description: 'Concise update on progress, plans, and blockers' },
       { id: 'interview', name: 'Interview', description: 'Candidate assessment and key discussion points' },
-      { id: 'brainstorming', name: 'Brainstorming', description: 'Capture ideas, suggestions, and creative concepts' }
+      { id: 'brainstorming', name: 'Brainstorming', description: 'Capture ideas, suggestions, and creative concepts' },
+      { id: 'standup', name: 'Stand Up', description: 'Quick standup format with updates, blockers, and actions' }
     ];
     setAvailableTemplates(templates);
   }, []);
 
-  // Handle template selection
+  // Handle template selection - triggers regeneration
   const handleTemplateSelection = useCallback((templateId: string, templateName: string) => {
-    setSelectedTemplate(templateId);
-    toast.success('Template selected', {
-      description: `Using "${templateName}" template for summary generation`,
-    });
-    Analytics.trackFeatureUsed('template_selected');
+    // Only trigger change if actually different
+    if (templateId !== selectedTemplate) {
+      previousTemplateRef.current = selectedTemplate;
+      setSelectedTemplate(templateId);
+      setTemplateChanged(true);
+      // Save template preference to localStorage for future meetings
+      localStorage.setItem('selectedTemplate', templateId);
+      toast.info('Regenerating notes with new template...', {
+        description: `Using "${templateName}" template`,
+      });
+      Analytics.trackFeatureUsed('template_selected');
+    }
+  }, [selectedTemplate]);
+
+  // Reset template changed flag after it's been consumed
+  const acknowledgeTemplateChange = useCallback(() => {
+    setTemplateChanged(false);
+  }, []);
+
+  // Load template preference from localStorage on mount
+  useEffect(() => {
+    const savedTemplate = localStorage.getItem('selectedTemplate');
+    if (savedTemplate) {
+      setSelectedTemplate(savedTemplate);
+    }
   }, []);
 
   return {
     availableTemplates,
     selectedTemplate,
     handleTemplateSelection,
+    templateChanged,
+    acknowledgeTemplateChange,
   };
 }

@@ -269,28 +269,45 @@ function MeetingDetailsContent() {
 
   }, [meetingId, fetchMeetingDetails, serverAddress]);
 
-  // Auto-generation check
+  // Poll for summary if it doesn't exist yet (notes are generated automatically by backend)
   useEffect(() => {
-    const checkAutoGen = async () => {
-      // Only auto-generate if:
-      // 1. We have meeting details
-      // 2. No summary exists
-      // 3. Meeting has transcripts
-      // 4. Haven't checked yet
-      if (
-        meetingDetails &&
-        meetingSummary === null &&
-        meetingDetails.transcripts &&
-        meetingDetails.transcripts.length > 0 &&
-        !hasCheckedAutoGen
-      ) {
-        console.log('🚀 No summary found, checking for auto-generation...');
-        await setupAutoGeneration();
-      }
-    };
+    if (
+      meetingDetails &&
+      meetingSummary === null &&
+      meetingDetails.transcripts &&
+      meetingDetails.transcripts.length > 0
+    ) {
+      // Notes are generated automatically by backend when meeting ends
+      // Poll for the summary to appear (it may still be processing)
+      const pollInterval = setInterval(async () => {
+        console.log(`🔄 Polling for summary for meeting ${meetingId}...`);
+        try {
+          if (!serverAddress) return;
+          const response = await fetch(`${serverAddress}/get-summary/${meetingId}`);
+          if (response.ok) {
+            const summary = await response.json();
+            if (summary.status !== 'error' && summary.data) {
+              // Summary is ready, reload the page or update state
+              window.location.reload();
+            }
+          }
+        } catch (error) {
+          console.error('Error polling for summary:', error);
+        }
+      }, 3000); // Poll every 3 seconds
 
-    checkAutoGen();
-  }, [meetingDetails, meetingSummary, hasCheckedAutoGen, setupAutoGeneration]);
+      // Stop polling after 2 minutes
+      const timeout = setTimeout(() => {
+        clearInterval(pollInterval);
+        console.log('⏱️ Stopped polling for summary after 2 minutes');
+      }, 120000);
+
+      return () => {
+        clearInterval(pollInterval);
+        clearTimeout(timeout);
+      };
+    }
+  }, [meetingDetails, meetingSummary, meetingId, serverAddress]);
 
 
   if (error) {

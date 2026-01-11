@@ -277,16 +277,18 @@ const Sidebar: React.FC = () => {
 
   const handleDelete = async (itemId: string) => {
     console.log('Deleting item:', itemId);
-    const payload = {
-      meetingId: itemId
-    };
 
     try {
-      const response = await fetch(`${serverAddress}/api/meetings/${itemId}`, {
-        method: 'DELETE',
+      const response = await fetch(`${serverAddress}/delete-meeting`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meeting_id: itemId }),
       });
 
-      if (!response.ok) throw new Error('Failed to delete meeting');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to delete meeting');
+      }
 
       console.log('Meeting deleted successfully');
       const updatedMeetings = meetings.filter((m: CurrentMeeting) => m.id !== itemId);
@@ -343,15 +345,18 @@ const Sidebar: React.FC = () => {
     }
 
     try {
-      const response = await fetch(`${serverAddress}/api/meetings/${meetingId}/title`, {
-        method: 'PUT',
+      const response = await fetch(`${serverAddress}/save-meeting-title`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ title: newTitle }),
+        body: JSON.stringify({ meeting_id: meetingId, title: newTitle }),
       });
 
-      if (!response.ok) throw new Error('Failed to update meeting title');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to update meeting title');
+      }
 
       // Update local state
       const updatedMeetings = meetings.map((m: CurrentMeeting) =>
