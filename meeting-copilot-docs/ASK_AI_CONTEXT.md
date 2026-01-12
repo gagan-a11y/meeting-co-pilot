@@ -1,365 +1,170 @@
-# Ask AI with Context Feature
+# Ask AI Context Strategy
+
+**Last Updated:** January 12, 2026
+
+This document explains how the Ask AI feature handles context for different query types.
+
+---
 
 ## Overview
 
-**Ask AI with Context** allows users to ask questions about meetings with two powerful modes:
-1. **Linked Context** (Scoped Search) - Search specific selected meetings
-2. **Global Context** - Search across all past meetings
+The Ask AI feature uses a **smart context strategy** that balances accuracy with efficiency:
 
-## Modes Explained
+| Query Type | Trigger | Context Source | Description |
+|------------|---------|----------------|-------------|
+| **Current Meeting** | Always | Frontend/DB | Full transcript, no limits |
+| **Linked Meetings** | Keywords | DB (full transcripts) | When user explicitly asks |
+| **Global Search** | Keywords | Vector Store (20 chunks) | Search across all meetings |
+| **Web Search** | Keywords | SerpAPI + Gemini | External real-time info |
 
-### 🔗 Linked Context (Scoped Search)
+---
 
-**When to Use**:
-- You know exactly which meetings are relevant
-- Focused, precise answers needed
-- Working on a specific project with related meetings
+## Context Flow Diagram
 
-**How It Works**:
-```mermaid
-graph LR
-    A[User] --> B[Select 3 Meetings]
-    B --> C[Ask Question]
-    C --> D[AI Searches ONLY Those 3]
-    D --> E[Get Targeted Answer]
+```
+User asks question
+        ↓
+┌─────────────────────────────────────────────┐
+│ Check for "search on web" keywords          │ → Web search (SerpAPI)
+└─────────────────────────────────────────────┘
+        ↓ (no match)
+┌─────────────────────────────────────────────┐
+│ Check for "search all meetings" keywords    │ → Vector search (20 chunks)
+└─────────────────────────────────────────────┘
+        ↓ (no match)
+┌─────────────────────────────────────────────┐
+│ Check for linked meeting keywords           │ → Fetch full DB transcripts
+│ + User has linked meetings                  │
+└─────────────────────────────────────────────┘
+        ↓ (no match)
+┌─────────────────────────────────────────────┐
+│ Use current meeting context only            │ → Full transcript
+└─────────────────────────────────────────────┘
+        ↓
+Pass all context to Gemini 2.0 Flash
 ```
 
-**Example**:
+---
+
+## Trigger Keywords
+
+### Web Search
+- `"search on web"`, `"find on web"`
+
+### Global Search (Vector Store)
+- `"search all meetings"`, `"search in all meetings"`
+- `"search globally"`, `"global search"`
+- `"find in all meetings"`, `"search across meetings"`
+
+### Linked Meetings (Full Transcripts)
+- `"search in linked meetings"`, `"linked meetings"`, `"search linked"`
+- `"previous meeting"`, `"last meeting"`, `"other meeting"`
+- `"compare"`, `"comparison"`, `"different from"`
+- `"history"`, `"past"`, `"previously discussed"`
+- `"follow up"`, `"what did we say"`, `"mentioned before"`
+
+---
+
+## Context Limits
+
+**No limits!** Gemini 2.0 Flash has a 1M+ token context window.
+
+### Token Estimation
+
+| Scenario | Est. Tokens | % of Limit |
+|----------|-------------|------------|
+| 30-min meeting | ~7K-10K | ~1% |
+| 1-hour meeting | ~15K-20K | ~2% |
+| 3-hour meeting | ~36K | ~3.5% |
+| 6 linked meetings (3hr each) | ~216K | **~22%** |
+
+Even the extreme case (6 x 3-hour meetings) uses only 22% of Gemini's limit.
+
+---
+
+## Grounded Prompt Strategy
+
+The system prompt prevents hallucinations while being helpful:
+
 ```
-Linked: [Q4 Planning, Budget Review, Marketing Strategy]
-Question: "What's the approved marketing budget?"
-Answer: "Based on Budget Review (Jan 5), the approved budget is $50k..."
-```
+You are a helpful meeting assistant. Use the provided context to answer questions accurately.
 
-### 🌐 Global Context (All Meetings)
-
-**When to Use**:
-- Exploratory questions
-- Don't know which meeting discussed the topic
-- Searching for patterns across all meetings
-
-**How It Works**:
-```mermaid
-graph LR
-    A[User] --> B[Ask Question]
-    B --> C[AI Searches ALL 38 Meetings]
-    C --> D[Get Broad Answer]
-```
-
-**Example**:
-```
-Linked: [None]
-Question: "What have we discussed about hiring?"
-Answer: "Hiring was mentioned in 5 meetings: Product Sync (Dec 10), Budget Review (Jan 5)..."
-```
-
-## Technical Architecture
-
-### User Workflow
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant UI as Chat Interface
-    participant Modal as Meeting Selector
-    participant BE as Backend
-    participant VDB as ChromaDB
-    participant LLM as AI
-
-    U->>UI: Click "Link Context" button
-    UI->>Modal: Show meeting list (from /list-meetings)
-    U->>Modal: Select meetings [A, B, C]
-    Modal->>UI: Return selected IDs
-    
-    U->>UI: Type question
-    UI->>BE: POST /chat-meeting<br/>{question, allowed_meeting_ids: [A,B,C]}
-    BE->>VDB: search_context(query, filter=[A,B,C])
-    VDB-->>BE: Return top 5 chunks ONLY from A, B, C
-    BE->>LLM: Combine chunks + question
-    LLM-->>BE: Stream answer with citations
-    BE-->>UI: Display answer
+RULES:
+1. Answer based on the meeting context provided below - use ALL relevant information
+2. When summarizing, include key points, decisions, action items, and important details
+3. If citing linked meetings, use the source format shown in brackets
+4. Do NOT invent information that isn't in the context
+5. Be helpful and thorough in your responses
 ```
 
-### Backend Implementation
+---
 
-**1. Scoped Search (`vector_store.py`)**
-```python
-async def search_context(
-    query: str, 
-    allowed_meeting_ids: List[str] = None,
-    n_results: int = 5
-) -> List[Dict]:
-    collection = _get_collection()
-    
-    # Build filter
-    if allowed_meeting_ids:
-        where_filter = {"meeting_id": {"$in": allowed_meeting_ids}}
-    else:
-        where_filter = None  # Search everything
-    
-    # Semantic search
-    results = collection.query(
-        query_texts=[query],
-        n_results=n_results,
-        where=where_filter  # 🔑 Key difference!
-    )
-    
-    return results
+## Conversation History
+
+Uses **first 2 + last 8** messages (total 10) for:
+- **First 2:** Initial context/intent
+- **Last 8:** Recent conversation flow
+
+Each message limited to 1000 chars.
+
+---
+
+## Implementation Details
+
+**File:** `backend/app/transcript_processor.py`
+
+### Key Functions
+
+| Function | Purpose |
+|----------|---------|
+| `chat_about_meeting()` | Main chat handler with context strategy |
+| `_needs_linked_context()` | Keyword detection for linked meetings |
+| `search_web()` | Web search via SerpAPI + Gemini |
+
+### Data Sources
+
+| Context Type | Source |
+|--------------|--------|
+| Current meeting | `context` param from frontend |
+| Linked meetings | `db.get_meeting(meeting_id)` |
+| Global search | `vector_store.search_context()` |
+
+---
+
+## Usage Examples
+
+### Example 1: Simple Question (Current Only)
+```
+User: "What were the action items?"
+→ Uses: Current meeting full transcript only
+→ Tokens: ~15K (1 hour meeting)
 ```
 
-**2. Chat Endpoint (`main.py`)**
-```python
-@app.post("/chat-meeting")
-async def chat_meeting(request: ChatRequest):
-    # 1. Get current meeting context
-    current_context = request.context_text or ""
-    
-    # 2. Search past meetings (scoped or global)
-    past_context = await search_context(
-        query=request.question,
-        allowed_meeting_ids=request.allowed_meeting_ids  # None = search all
-    )
-    
-    # 3. Combine and generate answer
-    full_context = f"""
-    Current Meeting: {current_context}
-    
-    Past Meeting Context:
-    {format_chunks(past_context)}
-    """
-    
-    # 4. Stream response
-    return StreamingResponse(ai_response, media_type="text/plain")
+### Example 2: Linked Meeting Search
+```
+User: "Search in linked meetings for budget discussion"
+→ Uses: Current + All linked meeting full transcripts
+→ Tokens: ~60K (3 linked 1-hour meetings)
 ```
 
-### Frontend Implementation
-
-**3. Meeting Selector (`MeetingSelector.tsx`)**
-```typescript
-const MeetingSelector = ({ onSelect }) => {
-    const [meetings, setMeetings] = useState([]);
-    const [selected, setSelected] = useState<string[]>([]);
-    
-    useEffect(() => {
-        // Fetch all available meetings
-        fetch('/list-meetings')
-            .then(res => res.json())
-            .then(data => setMeetings(data));
-    }, []);
-    
-    const handleToggle = (id: string) => {
-        setSelected(prev => 
-            prev.includes(id) 
-                ? prev.filter(x => x !== id)  // Remove
-                : [...prev, id]                // Add
-        );
-    };
-    
-    return (
-        <div>
-            {meetings.map(m => (
-                <Checkbox 
-                    key={m.id}
-                    checked={selected.includes(m.id)}
-                    onChange={() => handleToggle(m.id)}
-                    label={m.title}
-                />
-            ))}
-            <Button onClick={() => onSelect(selected)}>
-                Link {selected.length} Meetings
-            </Button>
-        </div>
-    );
-};
+### Example 3: Global Search
+```
+User: "Search all meetings for project deadline"
+→ Uses: Current + 20 chunks from vector store
+→ Tokens: ~40K
 ```
 
-**4. Chat Interface (`ChatInterface.tsx`)**
-```typescript
-const ChatInterface = () => {
-    const [linkedMeetingIds, setLinkedMeetingIds] = useState<string[]>([]);
-    const [showSelector, setShowSelector] = useState(false);
-    
-    const handleSendMessage = async (question: string) => {
-        const response = await fetch('/chat-meeting', {
-            method: 'POST',
-            body: JSON.stringify({
-                question,
-                allowed_meeting_ids: linkedMeetingIds.length > 0 
-                    ? linkedMeetingIds 
-                    : undefined,  // undefined = global search
-                // ... other fields
-            })
-        });
-        
-        // Stream and display response
-    };
-    
-    return (
-        <>
-            <Button onClick={() => setShowSelector(true)}>
-                Link Context ({linkedMeetingIds.length})
-            </Button>
-            
-            {linkedMeetingIds.length > 0 && (
-                <Badge>Searching {linkedMeetingIds.length} meetings</Badge>
-            )}
-            
-            <ChatMessages />
-            <ChatInput onSend={handleSendMessage} />
-            
-            {showSelector && (
-                <Modal>
-                    <MeetingSelector 
-                        onSelect={ids => {
-                            setLinkedMeetingIds(ids);
-                            setShowSelector(false);
-                        }}
-                    />
-                </Modal>
-            )}
-        </>
-    );
-};
+### Example 4: Web Search
+```
+User: "Search on web for latest AI news"
+→ Uses: SerpAPI + page crawling + Gemini synthesis
+→ No meeting context needed
 ```
 
-## Search Behavior Comparison
+---
 
-| Aspect | Linked Context | Global Context |
-|--------|----------------|----------------|
-| **Meetings Searched** | Only selected (e.g., 3) | All 38 meetings |
-| **Search Speed** | Faster | Slightly slower |
-| **Result Precision** | High (focused) | Variable (broad) |
-| **Use Case** | Known relevant meetings | Exploratory search |
-| **Filter** | `meeting_id IN [A,B,C]` | No filter |
-| **Top Results** | 5 chunks from 3 meetings | 5 chunks from ANY meeting |
+## Related Documents
 
-## Examples
-
-### Example 1: Budget Question
-
-**Linked Context**:
-```
-Selected: [Q4 Planning, Budget Review]
-Question: "What's the marketing budget?"
-Result: "In Budget Review (Jan 5), we allocated $50k for marketing..."
-✅ Precise, relevant
-```
-
-**Global Context**:
-```
-Selected: [None]
-Question: "What's the marketing budget?"
-Result: "Marketing budget was discussed in 3 meetings: Q4 Planning ($50k proposed), Budget Review ($50k approved), Feb Sync (spend review)..."
-✅ Comprehensive, but less focused
-```
-
-### Example 2: Hiring Discussion
-
-**Linked Context**:
-```
-Selected: [Product Sync, Engineering Standup]
-Question: "Who are we hiring?"
-Result: "In Product Sync, we discussed hiring a Senior Engineer and PM..."
-✅ Team-specific
-```
-
-**Global Context**:
-```
-Selected: [None]
-Question: "Who are we hiring?"
-Result: "Hiring discussed across 7 meetings: Engineering (2 devs), Marketing (1 manager), Sales (3 reps)..."
-✅ Company-wide view
-```
-
-## Best Practices
-
-### When to Use Linked Context
-1. **Project-specific questions**: Link all meetings in a project
-2. **Time-bound queries**: Link meetings from specific quarter
-3. **Topic clustering**: Link related strategic discussions
-
-### When to Use Global Context
-1. **Discovery**: "Has anyone mentioned X?"
-2. **Patterns**: "What are recurring themes?"
-3. **Unknown location**: "Where did we discuss Y?"
-
-## Performance Considerations
-
-### Linked Context (3 meetings)
-- Vector search: ~50-100ms
-- Chunks processed: ~30 total
-- Top results: 5 (maybe 1-2 per meeting)
-- **Recommended for**: Daily use
-
-### Global Context (38 meetings)
-- Vector search: ~200-500ms
-- Chunks processed: ~90 total
-- Top results: 5 (distributed across any)
-- **Recommended for**: Occasional deep dives
-
-## Token Usage
-
-**Typical Request**:
-```
-Current Meeting Transcript:  500 tokens
-Past Meeting Chunks (5):     625 tokens
-Question:                     50 tokens
-Chat History (10 messages): 1000 tokens
--------------------------------------------
-Total Input:                2175 tokens
-AI Response:                 ~500 tokens
--------------------------------------------
-Total:                      2675 tokens (well within 8k limit ✅)
-```
-
-## API Reference
-
-### Endpoint
-```
-POST /chat-meeting
-```
-
-### Request (Linked Context)
-```json
-{
-    "meeting_id": "current-recording",
-    "question": "What's the budget?",
-    "model": "groq",
-    "model_name": "llama-3.3-70b-versatile",
-    "context_text": "We're discussing Q4 plans...",
-    "allowed_meeting_ids": ["meeting-A", "meeting-B", "meeting-C"],
-    "history": [
-        {"role": "user", "content": "Hi"},
-        {"role": "assistant", "content": "Hello!"}
-    ]
-}
-```
-
-### Request (Global Context)
-```json
-{
-    "meeting_id": "current-recording",
-    "question": "What's the budget?",
-    "model": "groq",
-    "model_name": "llama-3.3-70b-versatile",
-    "context_text": "We're discussing Q4 plans...",
-    "allowed_meeting_ids": null,  // or omit entirely
-    "history": []
-}
-```
-
-### Response
-```
-Content-Type: text/plain
-Transfer-Encoding: chunked
-
-Based on Budget Review (Jan 5), the approved budget...
-```
-
-## Future Enhancements
-
-- [ ] Auto-suggest relevant meetings based on question
-- [ ] Visual indicator showing which meetings were referenced
-- [ ] Save and load meeting selection presets
-- [ ] Time-based filters (last 7 days, this quarter, etc.)
-- [ ] Tag-based meeting organization
+- [FUTURE_OPTIMIZATIONS.md](./FUTURE_OPTIMIZATIONS.md) - P0/P1/P2 optimization backlog
+- [CROSS_MEETING_SEARCH.md](./CROSS_MEETING_SEARCH.md) - Vector store architecture
+- [CHAT_MEMORY_ARCHITECTURE.md](./CHAT_MEMORY_ARCHITECTURE.md) - Chat history handling
