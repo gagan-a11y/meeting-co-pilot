@@ -83,11 +83,17 @@ class StreamingTranscriptionManager:
         self.total_chunks_processed = 0
         self.total_transcriptions = 0
 
-        # Time-based debounce
+        # SMART TIMER CONFIG
         self.last_transcription_time = 0
-        self.min_transcription_interval = 8.0  # Reduced from 10s to 8s
+        self.speech_start_time = 0  # When current speech segment started
+        
+        # Smart trigger thresholds
+        self.silence_threshold_ms = 1200   # 1.2s silence → finalize (reverted from 600ms for cleaner output)
+        self.max_buffer_duration_ms = 12000  # 12s max → force finalize
+        self.punctuation_min_duration_ms = 3000  # Punctuation + 3s → finalize
+        self.min_transcription_interval = 2.0  # Min 2s between transcriptions
 
-        logger.info("✅ StreamingTranscriptionManager initialized (12s buffer, 1.5s overlap)")
+        logger.info("✅ StreamingTranscriptionManager initialized (SMART TIMER: 1.2s silence, 12s max, punctuation+3s)")
 
 
     async def process_audio_chunk(
@@ -116,6 +122,7 @@ class StreamingTranscriptionManager:
             if not self.is_speaking:
                 logger.debug("🎤 Speech started")
                 self.is_speaking = True
+                self.speech_start_time = time.time()  # Track when speech segment started
 
             self.silence_duration_ms = 0
 
@@ -168,13 +175,13 @@ class StreamingTranscriptionManager:
             if self.is_speaking:
                 self.silence_duration_ms += 100  # Estimate chunk duration
 
-                # Finalize if silence > 1000ms
-                if self.silence_duration_ms > 1000 and self.last_partial_text:
-                    # IMPROVED: Hash-based deduplication check
+                # SMART TRIGGER: Finalize if silence > 600ms (configurable)
+                if self.silence_duration_ms > self.silence_threshold_ms and self.last_partial_text:
+                    # Hash-based deduplication check
                     sentence_hash = self._get_sentence_hash(self.last_partial_text)
                     
                     if sentence_hash not in self.finalized_hashes:
-                        logger.debug(f"🔇 Speech ended (silence > 1s)")
+                        logger.info(f"🔇 SMART TRIGGER: Silence ({self.silence_duration_ms}ms > {self.silence_threshold_ms}ms)")
 
                         if on_final:
                             await on_final({
@@ -191,6 +198,7 @@ class StreamingTranscriptionManager:
                     self.last_partial_text = ""
                     self.same_text_count = 0
                     self.is_speaking = False
+                    self.speech_start_time = 0  # Reset speech timer
 
         self.total_chunks_processed += 1
 
@@ -229,11 +237,11 @@ class StreamingTranscriptionManager:
         max_overlap_check = min(20, len(new_words) // 2 + 5)
         
         # Get last 30 words of previous transcript for comparison
-        search_window = min(30, len(final_words))
+        search_window = min(50, len(final_words))  # Increased from 30 to catch more context
         final_tail_words = final_words[-search_window:]
         
         best_overlap = 0
-        similarity_threshold = 0.6  # 60% word match = overlap detected
+        similarity_threshold = 0.5  # Lowered from 0.6 to catch more overlaps
         
         # Try different overlap sizes, largest first
         for overlap_size in range(max_overlap_check, 2, -1):
@@ -309,16 +317,16 @@ class StreamingTranscriptionManager:
         if not self.last_final_text or len(text.split()) < 5:
             return False
         
-        # Get 4-grams from new text
-        new_ngrams = self._get_ngrams(text, n=4)
+        # Get 3-grams from new text (changed from 4 for finer detection)
+        new_ngrams = self._get_ngrams(text, n=3)
         if not new_ngrams:
             return False
         
-        # Get 4-grams from last portion of finalized text
+        # Get 3-grams from last portion of finalized text
         final_words = self.last_final_text.split()
         # Only check last ~100 words for performance
         recent_final = ' '.join(final_words[-100:]) if len(final_words) > 100 else self.last_final_text
-        final_ngrams = self._get_ngrams(recent_final, n=4)
+        final_ngrams = self._get_ngrams(recent_final, n=3)
         
         if not final_ngrams:
             return False
@@ -371,7 +379,7 @@ class StreamingTranscriptionManager:
             return
         
         # IMPROVED: Check for near-duplicates using n-gram matching
-        if self._is_near_duplicate(text, threshold=0.4):
+        if self._is_near_duplicate(text, threshold=0.35):  # Lowered from 0.4 to catch more
             # 40% of 4-grams match = likely duplicate
             return
 
@@ -390,31 +398,48 @@ class StreamingTranscriptionManager:
                 "is_stable": self.same_text_count >= 2
             })
 
-        # IMPROVED: Check if should finalize with sentence boundary detection
+        # SMART TIMER TRIGGER LOGIC
         is_complete_sentence = self._is_complete_sentence(text)
         
-        should_finalize = (
-            # Complete sentence + stable text
-            (self.same_text_count >= 2 and is_complete_sentence) or
-            # Force finalize after 4 repeats (even without punctuation)
-            self.same_text_count >= 4 or
-            # Very high confidence
-            confidence > 0.98
-        )
+        # Calculate speech duration
+        speech_duration_ms = (time.time() - self.speech_start_time) * 1000 if self.speech_start_time > 0 else 0
+        
+        # Determine trigger reason
+        trigger_reason = None
+        
+        # Trigger 1: Punctuation + 3s buffer
+        if is_complete_sentence and speech_duration_ms >= self.punctuation_min_duration_ms:
+            trigger_reason = "punctuation"
+            logger.info(f"⏱️ SMART TRIGGER: Punctuation + {speech_duration_ms:.0f}ms speech")
+        
+        # Trigger 2: Max buffer timeout (12s)
+        elif speech_duration_ms >= self.max_buffer_duration_ms:
+            trigger_reason = "timeout"
+            logger.info(f"⏱️ SMART TRIGGER: Max timeout ({speech_duration_ms:.0f}ms >= {self.max_buffer_duration_ms}ms)")
+        
+        # Trigger 3: Stability (text unchanged 4+ times)
+        elif self.same_text_count >= 4:
+            trigger_reason = "stability"
+            logger.info(f"⏱️ SMART TRIGGER: Text stable ({self.same_text_count} repeats)")
+        
+        # Trigger 4: Complete sentence + stable (2+ repeats)
+        elif self.same_text_count >= 2 and is_complete_sentence:
+            trigger_reason = "sentence_complete"
+            logger.info(f"⏱️ SMART TRIGGER: Sentence complete + stable")
 
-        if should_finalize:
-            # IMPROVED: Debounce - check hash before emitting
+        if trigger_reason:
+            # Debounce - check hash before emitting
             if sentence_hash in self.finalized_hashes:
                 logger.debug(f"⏭️  Debounced duplicate final: '{text[:50]}...'")
                 return
                 
             if on_final:
-                logger.debug(f"✅ Finalizing: '{text[:50]}...' (sentence={is_complete_sentence})")
+                logger.debug(f"✅ Finalizing: '{text[:50]}...' (reason={trigger_reason})")
 
                 final_data = {
                     "text": text,
                     "confidence": confidence,
-                    "reason": "sentence_complete" if is_complete_sentence else "stability"
+                    "reason": trigger_reason
                 }
 
                 # Include translation metadata if available
@@ -431,6 +456,7 @@ class StreamingTranscriptionManager:
                 self.last_final_text += " " + text
                 self.last_partial_text = ""
                 self.same_text_count = 0
+                self.speech_start_time = time.time()  # Reset for next segment
 
     def get_stats(self) -> dict:
         """Get performance statistics"""
