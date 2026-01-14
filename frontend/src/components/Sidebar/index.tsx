@@ -105,7 +105,7 @@ const Sidebar: React.FC = () => {
       }
 
       try {
-        const response = await fetch(`${serverAddress}/api/model-config`);
+        const response = await fetch(`${serverAddress}/get-model-config`);
         if (response.ok) {
           const data = await response.json();
           if (data && data.provider !== null) {
@@ -131,7 +131,7 @@ const Sidebar: React.FC = () => {
       }
 
       try {
-        const response = await fetch(`${serverAddress}/api/transcript-config`);
+        const response = await fetch(`${serverAddress}/get-transcript-config`);
         if (response.ok) {
           const data = await response.json();
           if (data && data.provider !== null) {
@@ -152,7 +152,7 @@ const Sidebar: React.FC = () => {
   // Handle model config save
   const handleSaveModelConfig = async (config: ModelConfig) => {
     try {
-      const response = await fetch(`${serverAddress}/api/model-config`, {
+      const response = await fetch(`${serverAddress}/save-model-config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
@@ -175,7 +175,7 @@ const Sidebar: React.FC = () => {
   const handleSaveTranscriptConfig = async (updatedConfig?: TranscriptModelProps) => {
     try {
       const configToSave = updatedConfig || transcriptModelConfig;
-      const response = await fetch(`${serverAddress}/api/transcript-config`, {
+      const response = await fetch(`${serverAddress}/save-transcript-config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(configToSave)

@@ -7,6 +7,7 @@ import { TranscriptSettings, TranscriptModelProps } from '@/components/Transcrip
 import { RecordingSettings } from '@/components/RecordingSettings';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
+import { apiUrl } from '@/lib/config';
 
 type SettingsTab = 'general' | 'recording' | 'Transcriptionmodels' | 'summaryModels';
 
@@ -30,7 +31,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const loadTranscriptConfig = async () => {
       try {
-        const response = await fetch('http://localhost:8000/api/transcript-config');
+        const response = await fetch(`${apiUrl}/get-transcript-config`);
         if (response.ok) {
           const config = await response.json();
           if (config) {
@@ -53,7 +54,7 @@ export default function SettingsPage() {
   const handleSaveConfig = async (config: TranscriptModelProps) => {
     try {
       console.log('[SettingsPage] Saving transcript config:', config);
-      const response = await fetch('http://localhost:8000/api/transcript-config', {
+      const response = await fetch(`${apiUrl}/save-transcript-config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)

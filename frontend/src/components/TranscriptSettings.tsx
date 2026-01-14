@@ -6,6 +6,7 @@ import { Label } from './ui/label';
 import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
 import { ModelManager } from './WhisperModelManager';
 import { ParakeetModelManager } from './ParakeetModelManager';
+import { apiUrl } from '@/lib/config';
 
 
 export interface TranscriptModelProps {
@@ -36,7 +37,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
     const fetchApiKey = async (provider: string) => {
         try {
-            const response = await fetch(`http://localhost:8000/api/transcript-config`);
+            const response = await fetch(`${apiUrl}/get-transcript-config`);
             if (response.ok) {
                 const config = await response.json();
                 if (config.provider === provider && config.apiKey) {
