@@ -28,6 +28,20 @@ export const config = {
   environment: isDevelopment ? 'development' : 'production',
 };
 
+// Headers to skip ngrok browser warning (required for free tier)
+export const ngrokHeaders = {
+  'ngrok-skip-browser-warning': 'true',
+};
+
+// Helper function for fetch with ngrok headers
+export async function fetchWithHeaders(url: string, options: RequestInit = {}): Promise<Response> {
+  const headers = {
+    ...ngrokHeaders,
+    ...options.headers,
+  };
+  return fetch(url, { ...options, headers });
+}
+
 // Log configuration on startup (client-side only)
 if (typeof window !== 'undefined' && config.debug) {
   console.log('[Config] Environment:', config.environment);
