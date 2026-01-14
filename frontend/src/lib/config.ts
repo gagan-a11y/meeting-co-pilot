@@ -14,12 +14,12 @@ export const config = {
   // HTTP API base URL
   apiUrl: isDevelopment 
     ? 'http://localhost:5167'
-    : (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5167'),
+    : (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://34.69.51.193:5167'),
   
   // WebSocket URL for real-time streaming
   wsUrl: isDevelopment
     ? 'ws://localhost:5167/ws/streaming-audio'
-    : (process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:5167/ws/streaming-audio'),
+    : (process.env.NEXT_PUBLIC_WS_URL || 'ws://34.69.51.193:5167/ws/streaming-audio'),
   
   // Debug mode - enables extra logging
   debug: isDevelopment,
