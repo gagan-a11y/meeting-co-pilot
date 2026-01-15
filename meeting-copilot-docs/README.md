@@ -200,6 +200,8 @@ pnpm run dev
 - [Permissions & RBAC](./RBAC_SPEC.md) - Workspaces and Meeting roles specification
 - [Catch Me Up](./CATCH_ME_UP.md) - Real-time meeting summaries for late joiners
 - [Ask AI with Context](./ASK_AI_CONTEXT.md) - Linked vs Global context search
+- [Chat-Based Note Interface](./CHAT_BASED_NOTE_INTERFACE.md) - Dynamic AI refinement of notes ⭐ **NEW**
+- [User-Provided API Keys](./USER_PROVIDED_API_KEYS.md) - Personal keys for Grok and other providers ⭐ **NEW**
 - [Progress Report](./PROGRESS_REPORT.md) - Development milestones and achievements
 
 ---

@@ -98,6 +98,12 @@ AI assistant that can answer questions using meeting context and past meeting hi
 **G8: Secure Access & RBAC**
 Secure access restricted to organization domain (`@appointy.com`), with workspace and meeting-level permissions to ensure privacy and control.
 
+**G9: Dynamic Chat-Based Notes**
+Allow users to refine and edit meeting notes using a chat interface, moving beyond static document generation.
+
+**G10: Personal API Key Support**
+Enable users to bring their own API keys (e.g., Grok) for personalized cost management and specialized model access.
+
 ### ❌ Non-Goals (What We Will NOT Do)
 
 **NG1**: Video/audio conferencing
@@ -123,8 +129,8 @@ No scheduling, invites, or recurring meeting management.
 **NG8**: Offline mode
 Requires network connection for real-time sync between participants.
 
-**NG9**: Real-time collaborative editing
-Participants view content, not edit it. Host controls the recording. No Google Docs-style co-editing.
+**NG9: Real-time collaborative multi-user editing**
+While AI-assisted editing and manual host edits are supported, full "Google Docs" style simultaneous multi-user typing is not the focus of the initial version.
 
 **NG10**: Custom AI model training
 Use existing models (Whisper, Ollama, Claude). No fine-tuning or custom model development.
