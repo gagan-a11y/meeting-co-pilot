@@ -3,11 +3,11 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, LogOut } from 'lucide-react';
 import { signOut } from 'next-auth/react';
+import { authFetch } from '@/lib/api';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import type { CurrentMeeting } from '@/components/Sidebar/SidebarProvider';
 import { apiUrl } from '@/lib/config';
-import { authFetch } from '@/lib/api';
 import { ConfirmationModal } from '../ConfirmationModel/confirmation-modal';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SettingTabs } from '../SettingTabs';
@@ -108,7 +108,7 @@ const Sidebar: React.FC = () => {
       }
 
       try {
-        const response = await fetch(`${serverAddress}/get-model-config`);
+        const response = await authFetch('/get-model-config');
         if (response.ok) {
           const data = await response.json();
           if (data && data.provider !== null) {
@@ -134,7 +134,7 @@ const Sidebar: React.FC = () => {
       }
 
       try {
-        const response = await fetch(`${serverAddress}/get-transcript-config`);
+        const response = await authFetch('/get-transcript-config');
         if (response.ok) {
           const data = await response.json();
           if (data && data.provider !== null) {
@@ -155,9 +155,8 @@ const Sidebar: React.FC = () => {
   // Handle model config save
   const handleSaveModelConfig = async (config: ModelConfig) => {
     try {
-      const response = await fetch(`${serverAddress}/save-model-config`, {
+      const response = await authFetch('/save-model-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       });
 
@@ -178,9 +177,8 @@ const Sidebar: React.FC = () => {
   const handleSaveTranscriptConfig = async (updatedConfig?: TranscriptModelProps) => {
     try {
       const configToSave = updatedConfig || transcriptModelConfig;
-      const response = await fetch(`${serverAddress}/save-transcript-config`, {
+      const response = await authFetch('/save-transcript-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(configToSave)
       });
 

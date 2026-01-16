@@ -954,9 +954,8 @@ export default function Home() {
         modelName = 'gemini-3-flash-preview';
       }
 
-      const response = await fetch(`${serverAddress}/catch-up`, {
+      const response = await authFetch('/catch-up', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcripts: transcriptTexts,
           model: provider,
@@ -1040,7 +1039,7 @@ export default function Home() {
     // Honor saved model settings from backend (including OpenRouter)
     const fetchModelConfig = async () => {
       try {
-        const response = await fetch(`${serverAddress}/get-model-config`);
+        const response = await authFetch('/get-model-config');
         if (response.ok) {
           const data = await response.json();
           if (data && data.provider) {

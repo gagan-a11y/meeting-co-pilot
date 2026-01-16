@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
+import { authFetch } from '@/lib/api';
 import { ModelConfig, ModelSettingsModal } from '@/components/ModelSettingsModal';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 
@@ -23,7 +24,7 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
   const fetchModelConfig = useCallback(async () => {
     if (!serverAddress) return;
     try {
-      const response = await fetch(`${serverAddress}/get-model-config`);
+      const response = await authFetch('/get-model-config');
       if (response.ok) {
         const data = await response.json();
         if (data && data.provider !== null) {
@@ -53,9 +54,8 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
   const handleSaveModelConfig = async (config: ModelConfig) => {
     if (!serverAddress) return;
     try {
-      const response = await fetch(`${serverAddress}/save-model-config`, {
+      const response = await authFetch('/save-model-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       });
 

@@ -33,6 +33,7 @@ export class AudioStreamClient {
   private audioQueue: Float32Array[] = [];
   private isReconnecting: boolean = false;
   private sessionId: string | null = null;
+  private userEmail: string | null = null;
 
   constructor(
     private wsUrlOverride: string = wsUrl
@@ -41,13 +42,14 @@ export class AudioStreamClient {
   /**
    * Start streaming audio to backend
    */
-  async start(callbacks: StreamingCallbacks): Promise<void> {
+  async start(callbacks: StreamingCallbacks, userEmail?: string): Promise<void> {
     if (this.isStreaming) return;
 
     this.callbacks = callbacks;
     this.reconnectAttempts = 0;
     this.audioQueue = []; // Clear queue on fresh start
     this.sessionId = null; // Clear session on fresh start
+    this.userEmail = userEmail || null;
 
     try {
       console.log('[AudioStream] Starting pipeline...');
@@ -142,9 +144,13 @@ export class AudioStreamClient {
   private async connectWebSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Append session_id if we have one (for resuming)
-      const url = this.sessionId 
+      let url = this.sessionId 
         ? `${this.wsUrlOverride}?session_id=${this.sessionId}`
         : this.wsUrlOverride;
+        
+      if (this.userEmail) {
+        url += (url.includes('?') ? '&' : '?') + `user_email=${encodeURIComponent(this.userEmail)}`;
+      }
         
       this.websocket = new WebSocket(url);
       this.websocket.binaryType = 'arraybuffer';
