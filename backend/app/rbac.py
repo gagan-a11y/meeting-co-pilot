@@ -31,14 +31,17 @@ class RBAC:
                     (meeting_id,)
                 )
                 row = await cursor.fetchone()
-                
                 if not row:
-                    if action in ['ai_interact', 'view']:
-                        logger.warning(f"RBAC: Meeting {meeting_id} not found in DB, but allowing '{action}' (assuming new/temp meeting)")
+                    # FALLBACK: If meeting doesn't exist in DB yet, but we're doing ai_interact,
+                    # it might be a newly created meeting that hasn't been saved yet.
+                    # Or it's a transient state. For safety, we only allow this for 'ai_interact'.
+                    if action == 'ai_interact':
+                        logger.warning(f"RBAC: Meeting {meeting_id} not found in DB. Allowing ai_interact as fallback.")
                         return True
+                    
                     logger.warning(f"RBAC: Meeting {meeting_id} not found")
                     return False
-                    
+                
                 owner_id, workspace_id = row
             
             logger.info(f"RBAC Check: user={user.email}, action={action}, meeting={meeting_id}, owner={owner_id}")

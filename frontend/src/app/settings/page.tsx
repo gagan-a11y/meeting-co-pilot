@@ -1,16 +1,17 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon } from 'lucide-react';
+import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, Key } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { TranscriptSettings, TranscriptModelProps } from '@/components/TranscriptSettings';
 import { RecordingSettings } from '@/components/RecordingSettings';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
+import { PersonalKeysSettings } from '@/components/PersonalKeysSettings';
 import { apiUrl } from '@/lib/config';
 import { authFetch } from '@/lib/api';
 
-type SettingsTab = 'general' | 'recording' | 'Transcriptionmodels' | 'summaryModels';
+type SettingsTab = 'general' | 'recording' | 'Transcriptionmodels' | 'summaryModels' | 'personalKeys';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -25,7 +26,8 @@ export default function SettingsPage() {
     { id: 'general' as const, label: 'General', icon: <Settings2 className="w-4 h-4" /> },
     { id: 'recording' as const, label: 'Recordings', icon: <Mic className="w-4 h-4" /> },
     { id: 'Transcriptionmodels' as const, label: 'Transcription', icon: <DatabaseIcon className="w-4 h-4" /> },
-    { id: 'summaryModels' as const, label: 'Summary', icon: <SparkleIcon className="w-4 h-4" /> }
+    { id: 'summaryModels' as const, label: 'Summary', icon: <SparkleIcon className="w-4 h-4" /> },
+    { id: 'personalKeys' as const, label: 'Personal Keys', icon: <Key className="w-4 h-4" /> }
   ];
 
   // Load saved transcript configuration on mount
@@ -119,6 +121,7 @@ export default function SettingsPage() {
                 />
               )}
               {activeTab === 'summaryModels' && <SummaryModelSettings />}
+              {activeTab === 'personalKeys' && <PersonalKeysSettings />}
             </div>
           </div>
         </div>

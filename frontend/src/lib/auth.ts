@@ -84,11 +84,16 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, account, user }) {
       // Initial sign in
       if (account && user) {
-        return {
-          accessToken: account.access_token,
-          accessTokenExpires: typeof account.expires_at === 'number'
-            ? account.expires_at * 1000
-            : Date.now() + ((typeof account.expires_in === 'number' ? account.expires_in : 3600) * 1000),
+          // Calculate expiry time (handle both expires_at and expires_in)
+          const accessTokenExpires = account.expires_at 
+            ? account.expires_at * 1000 
+            : Date.now() + (Number(account?.expires_in) || 3600) * 1000;
+            
+          console.log('[Auth] Initial sign in - Token expires at:', new Date(accessTokenExpires).toISOString(), 'expires_in:', account.expires_in);
+          
+          return {
+            accessToken: account.access_token,
+            accessTokenExpires,
           refreshToken: account.refresh_token,
           idToken: account.id_token,
           email: user.email,
@@ -97,8 +102,9 @@ export const authOptions: NextAuthOptions = {
         };
       }
 
-      // Return previous token if the access token has not expired yet
-      if (Date.now() < (token.accessTokenExpires as number)) {
+      // Return previous token if the access token has not expired yet (with 5-minute buffer)
+      // Refresh 5 minutes before actual expiry to prevent race conditions during API calls
+      if (Date.now() < (token.accessTokenExpires as number) - 5 * 60 * 1000) {
         return token;
       }
 

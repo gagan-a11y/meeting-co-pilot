@@ -1416,23 +1416,15 @@ async def websocket_streaming_audio(websocket: WebSocket, session_id: Optional[s
         # Create new session
         session_id = str(uuid.uuid4()) if not session_id else session_id
         
-        # Load env vars
-        import os
-        from dotenv import load_dotenv
-        load_dotenv("/app/.env")
-        groq_api_key = await db.get_api_key("groq", user_email=user_email)
-        if not groq_api_key:
-            import os
-            from dotenv import load_dotenv
-            load_dotenv("/app/.env")
-            load_dotenv(".env")
-            groq_api_key = os.getenv("GROQ_API_KEY")
+        # Only use user-provided Groq API key (no system fallback)
+        groq_api_key = await db.get_user_api_key(user_email, "groq") if user_email else None
 
         if not groq_api_key:
-            logger.error(f"[Streaming] GROQ_API_KEY not found (user: {user_email})")
+            logger.warning(f"[Streaming] No personal Groq API key for user: {user_email}")
             await websocket.send_json({
                 "type": "error",
-                "message": "GROQ_API_KEY not configured. Add it to backend/.env or your Personal Settings."
+                "code": "GROQ_KEY_REQUIRED",
+                "message": "Groq API key required. Please add your Groq API key in Settings → Personal Keys."
             })
             await websocket.close()
             return

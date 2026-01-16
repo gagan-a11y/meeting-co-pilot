@@ -10,7 +10,7 @@ Currently, all API calls use keys defined in the server's `.env` file. This mean
 Implement a "Personal API Keys" section in the user settings. These keys will be stored securely and prioritized over system keys when that specific user is performing actions.
 
 ### Key Capabilities
-- **Grok/xAI Integration**: Specific support for Grok API keys as requested.
+- **Groq Integration**: Specific support for Groq API keys (used for Whisper transcription).
 - **Secure Backend Storage**: Keys are encrypted at rest and never returned to the frontend after initial setup (except as masked strings like `gsk_...xxxx`).
 - **Provider Priority Logic**: System follows a simple hierarchy: `User Key` -> `Workspace Key` (Future) -> `System Key`.
 - **Validation**: Test the key immediately upon entry to ensure it works.

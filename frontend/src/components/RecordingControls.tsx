@@ -16,7 +16,7 @@ interface RecordingControlsProps {
   onRecordingStop: (callApi?: boolean) => void;
   onRecordingStart: () => void;
   onTranscriptReceived: (summary: SummaryResponse) => void;
-  onTranscriptionError?: (message: string) => void;
+  onTranscriptionError?: (message: string, code?: string) => void;
   onStopInitiated?: () => void;
   isRecordingDisabled: boolean;
   isParentProcessing: boolean;
@@ -42,6 +42,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [deviceError, setDeviceError] = useState<{ title: string, message: string } | null>(null);
+  const [sessionError, setSessionError] = useState<boolean>(false);
   const { data: session } = useSession();
 
   // Real-time streaming audio client
@@ -55,6 +56,17 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       isRecordingDisabled,
       isParentProcessing
     });
+  }, []);
+
+  // Listen for session expiry events from api.ts
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      console.warn('⚠️ Session expired during recording/usage');
+      setSessionError(true);
+    };
+
+    window.addEventListener('auth:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('auth:session-expired', handleSessionExpired);
   }, []);
 
   const handleStartRecording = useCallback(async () => {
@@ -99,9 +111,18 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           }
         },
 
-        onError: (error) => {
-          console.error('❌ Streaming error:', error);
-          onTranscriptionError?.(error.message);
+        onError: (error, code) => {
+          console.error('❌ Streaming error:', error, 'Code:', code);
+
+          // Handle GROQ_KEY_REQUIRED specifically
+          if (code === 'GROQ_KEY_REQUIRED') {
+            setDeviceError({
+              title: 'Groq API Key Required',
+              message: 'Please add your Groq API key in Settings → Personal Keys to use transcription.'
+            });
+          }
+
+          onTranscriptionError?.(error.message, code);
         },
 
         onDisconnected: () => {
@@ -251,6 +272,25 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
             </>
           )}
         </div>
+
+        {sessionError && (
+          <Alert className="mt-4 border-yellow-300 bg-yellow-50">
+            <AlertCircle className="h-5 w-5 text-yellow-600" />
+            <button
+              onClick={() => setSessionError(false)}
+              className="absolute right-3 top-3 text-yellow-600 hover:text-yellow-800 transition-colors"
+              aria-label="Close alert"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <AlertTitle className="text-yellow-800 font-semibold mb-1">
+              Session Expired
+            </AlertTitle>
+            <AlertDescription className="text-yellow-700 text-sm">
+              Your login session has expired. Recording will continue, but you may need to log in again in a new tab to save or view transcripts.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {deviceError && (
           <Alert variant="destructive" className="mt-4 border-red-300 bg-red-50">
