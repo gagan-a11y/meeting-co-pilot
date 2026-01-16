@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSidebar } from './Sidebar/SidebarProvider';
+import { authFetch } from '@/lib/api';
 
 import { Button } from '@/components/ui/button';
 import { useOllamaDownload } from '@/contexts/OllamaDownloadContext';
@@ -188,7 +189,7 @@ export function ModelSettingsModal({
 
       try {
         if (!serverAddress) return;
-        const response = await fetch(`${serverAddress}/get-model-config`);
+        const response = await authFetch('/get-model-config');
         if (response.ok) {
           const data = await response.json();
           if (data && data.provider !== null) {

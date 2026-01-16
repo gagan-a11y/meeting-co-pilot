@@ -307,7 +307,7 @@ async def save_summary(data: SaveSummaryRequest, current_user: User = Depends(ge
         logger.error(f"Error saving summary: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-async def process_transcript_background(process_id: str, transcript: TranscriptRequest, custom_prompt: str):
+async def process_transcript_background(process_id: str, transcript: TranscriptRequest, custom_prompt: str, user_email: Optional[str] = None):
     """Background task to process transcript"""
     try:
         logger.info(f"Starting background processing for process_id: {process_id}")
@@ -318,7 +318,7 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
         
         if transcript.model in ["claude", "groq", "openai", "gemini"]:
             # Check if API key is available for cloud providers
-            api_key = await processor.db.get_api_key(transcript.model)
+            api_key = await processor.db.get_api_key(transcript.model, user_email=user_email)
             if not api_key:
                 # Check for env var fallbacks
                 import os
@@ -340,7 +340,8 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
             model_name=transcript.model_name,
             chunk_size=transcript.chunk_size,
             overlap=transcript.overlap,
-            custom_prompt=template_prompt
+            custom_prompt=template_prompt,
+            user_email=user_email
         )
 
         # Create final summary structure by aggregating chunk results
@@ -475,7 +476,8 @@ async def process_transcript_api(
             process_transcript_background,
             process_id,
             transcript,
-            custom_prompt
+            custom_prompt,
+            current_user.email
         )
 
         return JSONResponse({
@@ -519,7 +521,9 @@ async def generate_detailed_notes(request: GenerateNotesRequest, background_task
             request.meeting_id,
             full_transcript_text,
             request.template_id,
-            meeting_title
+            meeting_title,
+            "", # custom_context
+            current_user.email
         )
 
         return JSONResponse(content={
@@ -588,7 +592,8 @@ async def generate_notes_for_meeting(meeting_id: str, request: GenerateNotesRequ
             full_transcript_text,
             template_id,
             meeting_title,
-            custom_context
+            custom_context,
+            current_user.email
         )
 
         return JSONResponse(content={
@@ -664,7 +669,8 @@ async def chat_meeting(request: ChatRequest, current_user: User = Depends(get_cu
             model=request.model,
             model_name=request.model_name,
             allowed_meeting_ids=request.allowed_meeting_ids,
-            history=request.history
+            history=request.history,
+            user_email=current_user.email
         )
 
         return StreamingResponse(stream_generator, media_type="text/plain")
@@ -718,7 +724,7 @@ Quick Catch-Up Summary:"""
         async def generate_catch_up():
             try:
                 if request.model == "groq":
-                    api_key = await db.get_api_key("groq")
+                    api_key = await db.get_api_key("groq", user_email=current_user.email)
                     if not api_key:
                         import os
                         api_key = os.getenv("GROQ_API_KEY")
@@ -742,7 +748,7 @@ Quick Catch-Up Summary:"""
                         if content:
                             yield content
                 elif request.model == "gemini":
-                    api_key = await db.get_api_key("gemini")
+                    api_key = await db.get_api_key("gemini", user_email=current_user.email)
                     if not api_key:
                         import os
                         api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -1016,20 +1022,18 @@ def get_template_prompt(template_id: str) -> str:
     
     return templates.get(template_id, templates["standard_meeting"])
 
-async def generate_notes_with_gemini_background(meeting_id: str, transcript_text: str, template_id: str, meeting_title: str, custom_context: str = ""):
-    """Background task to generate meeting notes using Gemini"""
+async def generate_notes_with_gemini_background(meeting_id: str, transcript_text: str, template_id: str, meeting_title: str, custom_context: str = "", user_email: Optional[str] = None):
+    """Background task to generate meeting notes using Gemini with support for long transcripts"""
     process_id = None
     try:
         logger.info(f"Starting Gemini note generation for meeting: {meeting_id} with template: {template_id}")
-        if custom_context:
-            logger.info(f"Using custom context: {custom_context[:100]}...")
         
         # Create process for tracking
         process_id = await processor.db.create_process(meeting_id)
         await processor.db.update_process(process_id, status="processing", result=None)
         
         # Get Gemini API key
-        api_key = await db.get_api_key("gemini")
+        api_key = await db.get_api_key("gemini", user_email=user_email)
         if not api_key:
             import os
             api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -1042,7 +1046,7 @@ async def generate_notes_with_gemini_background(meeting_id: str, transcript_text
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         
-        # Use gemini-2.0-flash for best accuracy and stability
+        # Use gemini-2.0-flash which has a massive context window (1M tokens)
         model_name = "gemini-2.0-flash"
         model = genai.GenerativeModel(model_name)
         
@@ -1058,8 +1062,13 @@ User-Provided Context:
 {custom_context}
 ---
 Use this context to better understand the meeting participants, purpose, and important topics to focus on.
-
 """
+
+        # For very long transcripts, we'll inform the model about the length and ask for a comprehensive summary
+        is_long_meeting = len(transcript_text) > 100000 # ~15k-20k words
+        length_guidance = ""
+        if is_long_meeting:
+            length_guidance = "\nNote: This is a long meeting. Please ensure the summary is comprehensive and covers the entire duration of the transcript without omitting later parts.\n"
         
         # CHUNKING LOGIC
         # Split transcript into chunks to avoid output token limits/truncation
@@ -1083,7 +1092,8 @@ This is {part_label} of the meeting.
 Template Instructions:
 {template_instructions}
 
-{context_section}IMPORTANT GUIDELINES:
+{context_section}{length_guidance}
+IMPORTANT GUIDELINES:
 
 Generate the notes in Markdown format with the following structure:
 
@@ -1121,8 +1131,14 @@ Only include corrections that meaningfully affect understanding (skip minor typo
 Now generate the meeting notes:"""
         
             try:
-                # Generate notes with Gemini
-                response = await model.generate_content_async(prompt)
+                # Generate notes with Gemini - increase max_output_tokens for long transcripts
+                response = await model.generate_content_async(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        temperature=0.2, # Lower temperature for more factual notes
+                        max_output_tokens=8192 # Ensure enough space for detailed notes
+                    )
+                )
                 
                 if not response or not response.text:
                     error_msg = f"Gemini returned empty response for chunk {i+1}"
@@ -1236,7 +1252,9 @@ async def save_transcript(request: SaveTranscriptRequest, background_tasks: Back
                     meeting_id,
                     full_transcript_text,
                     request.template_id or "standard_meeting",
-                    request.meeting_title
+                    request.meeting_title,
+                    "", # custom_context
+                    current_user.email
                 )
                 logger.info(f"Started automatic note generation with Gemini for meeting: {meeting_id}")
             except Exception as e:
@@ -1249,17 +1267,17 @@ async def save_transcript(request: SaveTranscriptRequest, background_tasks: Back
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get-model-config")
-async def get_model_config():
+async def get_model_config(current_user: User = Depends(get_current_user)):
     """Get the current model configuration"""
     model_config = await db.get_model_config()
     if model_config:
-        api_key = await db.get_api_key(model_config["provider"])
+        api_key = await db.get_api_key(model_config["provider"], user_email=current_user.email)
         if api_key != None:
             model_config["apiKey"] = api_key
     return model_config
 
 @app.post("/save-model-config")
-async def save_model_config(request: SaveModelConfigRequest):
+async def save_model_config(request: SaveModelConfigRequest, current_user: User = Depends(get_current_user)):
     """Save the model configuration"""
     await db.save_model_config(request.provider, request.model, request.whisperModel)
     if request.apiKey != None:
@@ -1267,11 +1285,11 @@ async def save_model_config(request: SaveModelConfigRequest):
     return {"status": "success", "message": "Model configuration saved successfully"}  
 
 @app.get("/get-transcript-config")
-async def get_transcript_config():
+async def get_transcript_config(current_user: User = Depends(get_current_user)):
     """Get the current transcript configuration"""
     transcript_config = await db.get_transcript_config()
     if transcript_config:
-        transcript_api_key = await db.get_transcript_api_key(transcript_config["provider"])
+        transcript_api_key = await db.get_transcript_api_key(transcript_config["provider"], user_email=current_user.email)
         if transcript_api_key != None:
             transcript_config["apiKey"] = transcript_api_key
     return transcript_config
@@ -1288,18 +1306,53 @@ class GetApiKeyRequest(BaseModel):
     provider: str
 
 @app.post("/get-api-key")
-async def get_api_key(request: GetApiKeyRequest):
+async def get_api_key_api(request: GetApiKeyRequest, current_user: User = Depends(get_current_user)):
     try:
-        return await db.get_api_key(request.provider)
+        return await db.get_api_key(request.provider, user_email=current_user.email)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/get-transcript-api-key")
-async def get_transcript_api_key(request: GetApiKeyRequest):
+async def get_transcript_api_key_api(request: GetApiKeyRequest, current_user: User = Depends(get_current_user)):
     try:
-        return await db.get_transcript_api_key(request.provider)
+        return await db.get_transcript_api_key(request.provider, user_email=current_user.email)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- User Personal API Keys Endpoints ---
+
+class UserApiKeySaveRequest(BaseModel):
+    provider: str
+    api_key: str
+
+@app.get("/api/user/keys")
+async def get_user_keys(current_user: User = Depends(get_current_user)):
+    """Get masked API keys for the current user"""
+    try:
+        return await db.get_user_api_keys(current_user.email)
+    except Exception as e:
+        logger.error(f"Error fetching user keys: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch keys")
+
+@app.post("/api/user/keys")
+async def save_user_key(request: UserApiKeySaveRequest, current_user: User = Depends(get_current_user)):
+    """Save/Update an encrypted API key for the current user"""
+    try:
+        await db.save_user_api_key(current_user.email, request.provider, request.api_key)
+        return {"status": "success", "message": f"API key for {request.provider} saved"}
+    except Exception as e:
+        logger.error(f"Error saving user key: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save key")
+
+@app.delete("/api/user/keys/{provider}")
+async def delete_user_key(provider: str, current_user: User = Depends(get_current_user)):
+    """Delete an API key for the current user"""
+    try:
+        await db.delete_user_api_key(current_user.email, provider)
+        return {"status": "success", "message": f"API key for {provider} deleted"}
+    except Exception as e:
+        logger.error(f"Error deleting user key: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete key")
 
 class MeetingSummaryUpdate(BaseModel):
     meeting_id: str
@@ -1342,7 +1395,7 @@ from streaming_transcription import StreamingTranscriptionManager
 streaming_managers = {}
 
 @app.websocket("/ws/streaming-audio")
-async def websocket_streaming_audio(websocket: WebSocket, session_id: Optional[str] = None):
+async def websocket_streaming_audio(websocket: WebSocket, session_id: Optional[str] = None, user_email: Optional[str] = None):
     """
     Real-time streaming transcription with Groq Whisper Large v3.
 
@@ -1367,14 +1420,19 @@ async def websocket_streaming_audio(websocket: WebSocket, session_id: Optional[s
         import os
         from dotenv import load_dotenv
         load_dotenv("/app/.env")
-        load_dotenv(".env")
-        
-        groq_api_key = os.getenv("GROQ_API_KEY")
+        groq_api_key = await db.get_api_key("groq", user_email=user_email)
         if not groq_api_key:
-            logger.error("[Streaming] GROQ_API_KEY not found")
+            import os
+            from dotenv import load_dotenv
+            load_dotenv("/app/.env")
+            load_dotenv(".env")
+            groq_api_key = os.getenv("GROQ_API_KEY")
+
+        if not groq_api_key:
+            logger.error(f"[Streaming] GROQ_API_KEY not found (user: {user_email})")
             await websocket.send_json({
                 "type": "error",
-                "message": "GROQ_API_KEY not configured. Add it to backend/.env"
+                "message": "GROQ_API_KEY not configured. Add it to backend/.env or your Personal Settings."
             })
             await websocket.close()
             return

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState, useEffect, useRef } from 'react';
+import { useSession } from 'next-auth/react';
 import { Square, Mic, AlertCircle, X } from 'lucide-react';
 import { SummaryResponse } from '@/types/summary';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -41,6 +42,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [deviceError, setDeviceError] = useState<{ title: string, message: string } | null>(null);
+  const { data: session } = useSession();
 
   // Real-time streaming audio client
   const audioClientRef = useRef<AudioStreamClient | null>(null);
@@ -105,7 +107,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         onDisconnected: () => {
           console.log('🔌 Streaming disconnected');
         }
-      });
+      }, session?.user?.email || undefined);
 
       console.log('✅ Real-time streaming started');
 

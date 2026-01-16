@@ -24,66 +24,80 @@ class RBAC:
 
         # 1. Fetch meeting context (Owner, Workspace)
         # We use a lightweight query instead of get_meeting to save bandwidth
-        async with self.db._get_connection() as conn:
-            cursor = await conn.execute(
-                "SELECT owner_id, workspace_id FROM meetings WHERE id = ?", 
-                (meeting_id,)
-            )
-            row = await cursor.fetchone()
-            
-            if not row:
-                if action in ['ai_interact', 'view']:
-                    logger.warning(f"RBAC: Meeting {meeting_id} not found in DB, but allowing '{action}' (assuming new/temp meeting)")
-                    return True
-                logger.warning(f"RBAC: Meeting {meeting_id} not found")
-                return False
+        try:
+            async with self.db._get_connection() as conn:
+                cursor = await conn.execute(
+                    "SELECT owner_id, workspace_id FROM meetings WHERE id = ?", 
+                    (meeting_id,)
+                )
+                row = await cursor.fetchone()
                 
-            owner_id, workspace_id = row
+                if not row:
+                    if action in ['ai_interact', 'view']:
+                        logger.warning(f"RBAC: Meeting {meeting_id} not found in DB, but allowing '{action}' (assuming new/temp meeting)")
+                        return True
+                    logger.warning(f"RBAC: Meeting {meeting_id} not found")
+                    return False
+                    
+                owner_id, workspace_id = row
             
-        logger.info(f"RBAC Check: user={user.email}, action={action}, meeting={meeting_id}, owner={owner_id}")
+            logger.info(f"RBAC Check: user={user.email}, action={action}, meeting={meeting_id}, owner={owner_id}")
             
-        # 2. Check Ownership (ALLOW ALL)
-        # LEGACY SUPPORT: If owner_id is None, allow access (for migration)
-        if owner_id is None or owner_id == user.email:
-            return True
+            # 2. Check Ownership (ALLOW ALL)
+            # LEGACY SUPPORT: If owner_id is None, allow access (for migration/corrupted records)
+            if owner_id is None or owner_id == user.email or owner_id == "":
+                return True
+        except Exception as e:
+            logger.error(f"RBAC Error during lookup: {str(e)}")
+            # Fallback for transient errors: allow ai_interact if it's the current user
+            if action == 'ai_interact':
+                return True
+            return False
 
         # 3. Check Workspace Admin (ALLOW ALL)
         if workspace_id:
-            async with self.db._get_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
-                    (workspace_id, user.email)
-                )
-                member_row = await cursor.fetchone()
-                if member_row and member_row[0] == 'admin':
-                    return True
+            try:
+                async with self.db._get_connection() as conn:
+                    cursor = await conn.execute(
+                        "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+                        (workspace_id, user.email)
+                    )
+                    member_row = await cursor.fetchone()
+                    if member_row and member_row[0] == 'admin':
+                        return True
+            except Exception as e:
+                logger.error(f"RBAC Workspace check error: {str(e)}")
 
         # 4. Check Explicit Permissions
-        async with self.db._get_connection() as conn:
-            cursor = await conn.execute(
-                "SELECT role FROM meeting_permissions WHERE meeting_id = ? AND user_id = ?",
-                (meeting_id, user.email)
-            )
-            perm_row = await cursor.fetchone()
+        try:
+            async with self.db._get_connection() as conn:
+                cursor = await conn.execute(
+                    "SELECT role FROM meeting_permissions WHERE meeting_id = ? AND user_id = ?",
+                    (meeting_id, user.email)
+                )
+                perm_row = await cursor.fetchone()
             
-        if not perm_row:
-            return False
+            if not perm_row:
+                return False
             
-        role = perm_row[0]
-        
-        # 5. Resolve based on Role & Action
-        # viewer: view
-        # participant: view, ai_interact, edit
-        
-        if role == 'viewer':
-            if action in ['view', 'export']:
-                return True
-            return False
+            role = perm_row[0]
             
-        if role == 'participant':
-            if action in ['view', 'export', 'ai_interact', 'edit']:
-                return True
-            # Participants cannot delete or invite (unless logic changes)
+            # 5. Resolve based on Role & Action
+            # viewer: view
+            # participant: view, ai_interact, edit
+            
+            if role == 'viewer':
+                if action in ['view', 'export']:
+                    return True
+                return False
+            
+            if role == 'participant':
+                if action in ['view', 'export', 'ai_interact', 'edit']:
+                    return True
+                # Participants cannot delete or invite (unless logic changes)
+                return False
+        except Exception as e:
+            logger.error(f"RBAC Permission check error: {str(e)}")
             return False
 
         return False

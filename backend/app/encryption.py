@@ -1,0 +1,30 @@
+import os
+from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MASTER_KEY = os.getenv("MASTER_KEY")
+
+if not MASTER_KEY:
+    # Fallback to a fixed key if not provided (NOT recommended for production)
+    # In this app, we should ensure it's provided.
+    raise ValueError("MASTER_KEY not found in environment variables")
+
+fernet = Fernet(MASTER_KEY.encode())
+
+def encrypt_key(plain_text: str) -> str:
+    """Encrypt a plain text API key."""
+    if not plain_text:
+        return ""
+    return fernet.encrypt(plain_text.encode()).decode()
+
+def decrypt_key(encrypted_text: str) -> str:
+    """Decrypt an encrypted API key."""
+    if not encrypted_text:
+        return ""
+    try:
+        return fernet.decrypt(encrypted_text.encode()).decode()
+    except Exception:
+        # If decryption fails (e.g. key changed), return empty or handle error
+        return ""

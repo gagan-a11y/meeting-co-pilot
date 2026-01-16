@@ -86,7 +86,7 @@ class TranscriptProcessor:
         logger.info("TranscriptProcessor initialized.")
         self.db = DatabaseManager()
         self.active_clients = []  # Track active Ollama client sessions
-    async def process_transcript(self, text: str, model: str, model_name: str, chunk_size: int = 5000, overlap: int = 1000, custom_prompt: str = "") -> Tuple[int, List[str]]:
+    async def process_transcript(self, text: str, model: str, model_name: str, chunk_size: int = 5000, overlap: int = 1000, custom_prompt: str = "", user_email: Optional[str] = None) -> Tuple[int, List[str]]:
         """
         Process transcript text into chunks and generate structured summaries for each chunk using an AI model.
 
@@ -113,7 +113,7 @@ class TranscriptProcessor:
         try:
             # Select and initialize the AI model and agent
             if model == "claude":
-                api_key = await db.get_api_key("claude")
+                api_key = await db.get_api_key("claude", user_email=user_email)
                 if not api_key: raise ValueError("ANTHROPIC_API_KEY environment variable not set")
                 llm = AnthropicModel(model_name, provider=AnthropicProvider(api_key=api_key))
                 logger.info(f"Using Claude model: {model_name}")
@@ -133,13 +133,13 @@ class TranscriptProcessor:
                     overlap = 1000
                 logger.info(f"Using Ollama model: {model_name}")
             elif model == "groq":
-                api_key = await db.get_api_key("groq")
+                api_key = await db.get_api_key("groq", user_email=user_email)
                 if not api_key: raise ValueError("GROQ_API_KEY environment variable not set")
                 llm = GroqModel(model_name, provider=GroqProvider(api_key=api_key))
                 logger.info(f"Using Groq model: {model_name}")
             # --- ADD OPENAI SUPPORT HERE ---
             elif model == "openai":
-                api_key = await db.get_api_key("openai")
+                api_key = await db.get_api_key("openai", user_email=user_email)
                 if not api_key: raise ValueError("OPENAI_API_KEY environment variable not set")
                 llm = OpenAIModel(model_name, provider=OpenAIProvider(api_key=api_key))
                 logger.info(f"Using OpenAI model: {model_name}")
@@ -325,7 +325,7 @@ class TranscriptProcessor:
         logger.info("Linked context: no trigger keyword detected, skipping linked meeting search")
         return False
 
-    async def search_web(self, query: str) -> str:
+    async def search_web(self, query: str, user_email: Optional[str] = None) -> str:
         """
         Real web search using SerpAPI (Google) + crawling + Gemini summarization.
         1. Search Google via SerpAPI for URLs
@@ -417,7 +417,7 @@ class TranscriptProcessor:
             logger.info(f"Extracted content from {len(sources)} sources")
             
             # Step 3: Use Gemini to synthesize
-            api_key = await db.get_api_key("gemini")
+            api_key = await db.get_api_key("gemini", user_email=user_email)
             if not api_key:
                 import os
                 api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -474,7 +474,7 @@ End with a "Sources" section listing all referenced URLs."""
             logger.error(f"Real web search failed: {e}", exc_info=True)
             return f"Web search failed: {str(e)}"
 
-    async def _needs_web_search(self, question: str, context_snippet: str) -> bool:
+    async def _needs_web_search(self, question: str, context_snippet: str, user_email: Optional[str] = None) -> bool:
         """
         Use gemini-pro model to quickly determine if the question needs a web search.
         Returns True if the question requires external/real-time information.
@@ -483,7 +483,7 @@ End with a "Sources" section listing all referenced URLs."""
         has_context = bool(context_snippet and len(context_snippet.strip()) > 50)
         
         try:
-            api_key = await db.get_api_key("gemini")
+            api_key = await db.get_api_key("gemini", user_email=user_email)
             if not api_key:
                 api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
             if not api_key:
@@ -514,7 +514,7 @@ Answer ONLY "SEARCH" or "MEETING":
             logger.warning(f"Web search classifier failed: {e}")
             return False
 
-    async def chat_about_meeting(self, context: str, question: str, model: str, model_name: str, allowed_meeting_ids: Optional[List[str]] = None, history: Optional[List[Dict[str, str]]] = None):
+    async def chat_about_meeting(self, context: str, question: str, model: str, model_name: str, allowed_meeting_ids: Optional[List[str]] = None, history: Optional[List[Dict[str, str]]] = None, user_email: Optional[str] = None):
         """
         Ask a question about the meeting context with cross-meeting search capabilities.
         Returns a streaming response generator.
@@ -538,7 +538,7 @@ Answer ONLY "SEARCH" or "MEETING":
                 # Return a generator that does the search
                 async def web_search_response():
                     yield f"🔍 Searching web for: *{search_query}*...\n\n"
-                    result = await self.search_web(search_query)
+                    result = await self.search_web(search_query, user_email=user_email)
                     yield result
                 
                 return web_search_response()
@@ -674,7 +674,7 @@ USER QUESTION: {question}
 
             # --- GROQ SUPPORT ---
             elif model == "groq":
-                api_key = await db.get_api_key("groq")
+                api_key = await db.get_api_key("groq", user_email=user_email)
                 if not api_key:
                     api_key = os.getenv("GROQ_API_KEY")
                 if not api_key: 
@@ -709,7 +709,7 @@ USER QUESTION: {question}
 
             # --- OPENAI SUPPORT ---
             elif model == "openai":
-                api_key = await db.get_api_key("openai")
+                api_key = await db.get_api_key("openai", user_email=user_email)
                 if not api_key: raise ValueError("OpenAI API key not found")
                 
                 from openai import AsyncOpenAI
@@ -735,7 +735,7 @@ USER QUESTION: {question}
             
             # --- CLAUDE SUPPORT ---
             elif model == "claude":
-                 api_key = await db.get_api_key("claude")
+                 api_key = await db.get_api_key("claude", user_email=user_email)
                  if not api_key: raise ValueError("Anthropic API key not found")
                  
                  from anthropic import AsyncAnthropic
@@ -761,7 +761,7 @@ USER QUESTION: {question}
 
             # --- GEMINI SUPPORT ---
             elif model == "gemini":
-                api_key = await db.get_api_key("gemini")
+                api_key = await db.get_api_key("gemini", user_email=user_email)
                 if not api_key:
                     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
                 if not api_key: raise ValueError("Gemini API key not found")
