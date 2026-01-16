@@ -12,7 +12,7 @@
 export interface StreamingCallbacks {
   onPartial?: (text: string, confidence: number, isStable: boolean) => void;
   onFinal?: (text: string, confidence: number, reason: string) => void;
-  onError?: (error: Error) => void;
+  onError?: (error: Error, code?: string) => void;
   onConnected?: (sessionId: string) => void;
   onDisconnected?: () => void;
 }
@@ -179,7 +179,7 @@ export class AudioStreamClient {
           }
           else if (data.type === 'partial') this.callbacks.onPartial?.(data.text, data.confidence, data.is_stable);
           else if (data.type === 'final') this.callbacks.onFinal?.(data.text, data.confidence, data.reason);
-          else if (data.type === 'error') this.callbacks.onError?.(new Error(data.message));
+          else if (data.type === 'error') this.callbacks.onError?.(new Error(data.message), data.code);
         } catch (e) {
           console.error('Parse error', e);
         }

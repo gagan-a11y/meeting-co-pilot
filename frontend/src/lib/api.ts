@@ -14,11 +14,13 @@ export async function authFetch(endpoint: string, options: RequestInit = {}) {
     throw new Error('Unauthorized: No active session');
   }
 
-  // Handle refresh error - if token rotation failed, force sign out
+  // Handle refresh error - if token rotation failed, notify UI instead of forcing redirect
   if ((session as any).error === "RefreshAccessTokenError") {
-    console.error('[AuthFetch] Token refresh failed, forcing logout');
-    signOut({ callbackUrl: '/login' });
-    throw new Error('Session expired: Please log in again');
+    console.error('[AuthFetch] Token refresh failed');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('auth:session-expired'));
+    }
+    throw new Error('Session expired: Please refresh the page');
   }
 
   // Ensure endpoint starts with / if not absolute
@@ -57,10 +59,12 @@ export async function authFetch(endpoint: string, options: RequestInit = {}) {
       });
     }
 
-    // If refresh failed or wasn't triggered, force logout
-    console.error('[AuthFetch] Session invalid, forcing logout');
-    signOut({ callbackUrl: '/login' });
-    throw new Error('Session expired: Please log in again');
+    // If refresh failed or wasn't triggered, notify UI
+    console.error('[AuthFetch] Session invalid');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('auth:session-expired'));
+    }
+    throw new Error('Session expired: Please refresh the page');
   }
 
   return response;

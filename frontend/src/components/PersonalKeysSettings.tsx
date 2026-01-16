@@ -13,10 +13,10 @@ interface PersonalKey {
 }
 
 const PROVIDERS = [
-    { id: 'grok', name: 'Grok (xAI)' },
-    { id: 'gemini', name: 'Gemini (Google)' },
-    { id: 'openai', name: 'OpenAI' },
-    { id: 'claude', name: 'Claude (Anthropic)' },
+    { id: 'groq', name: 'Groq (Whisper)' },
+    // { id: 'gemini', name: 'Gemini (Google)' },
+    // { id: 'openai', name: 'OpenAI' },
+    // { id: 'claude', name: 'Claude (Anthropic)' },
 ];
 
 export function PersonalKeysSettings() {
