@@ -14,6 +14,10 @@ except ImportError:
     import os
     sys.path.append(os.path.dirname(__file__))
     from schema_validator import SchemaValidator
+try:
+    from .encryption import encrypt_key, decrypt_key
+except ImportError:
+    from encryption import encrypt_key, decrypt_key
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +224,19 @@ class DatabaseManager:
                     elevenLabsApiKey TEXT,
                     groqApiKey TEXT,
                     openaiApiKey TEXT
+                )
+            """)
+
+            # Create user_api_keys table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_api_keys (
+                    user_email TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_email, provider)
                 )
             """)
 
@@ -699,11 +716,20 @@ class DatabaseManager:
             logger.error(f"Database connection error in save_api_key: {str(e)}", exc_info=True)
             raise
 
-    async def get_api_key(self, provider: str):
-        """Get the API key"""
+    async def get_api_key(self, provider: str, user_email: Optional[str] = None):
+        """Get the API key, prioritizing user-provided keys if user_email is given"""
+        # 1. Check User-Provided API Key first if email is provided
+        if user_email:
+            user_key = await self.get_user_api_key(user_email, provider)
+            if user_key:
+                return user_key
+
+        # 2. Fallback to System API Key
         provider_list = ["openai", "claude", "groq", "ollama", "gemini"]
         if provider not in provider_list:
-            raise ValueError(f"Invalid provider: {provider}")
+            # Check if it might be an alias or just return empty if unknown
+            return ""
+            
         if provider == "openai":
             api_key_name = "openaiApiKey"
         elif provider == "claude":
@@ -714,10 +740,67 @@ class DatabaseManager:
             api_key_name = "ollamaApiKey"
         elif provider == "gemini":
             api_key_name = "geminiApiKey"
+        
         async with self._get_connection() as conn:
             cursor = await conn.execute(f"SELECT {api_key_name} FROM settings WHERE id = '1'")
             row = await cursor.fetchone()
             return row[0] if row and row[0] else ""
+
+    async def save_user_api_key(self, user_email: str, provider: str, api_key: str):
+        """Save an encrypted API key for a specific user."""
+        encrypted_key = encrypt_key(api_key)
+        now = datetime.utcnow().isoformat()
+        async with self._get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_api_keys (user_email, provider, api_key, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_email, provider) DO UPDATE SET
+                    api_key = excluded.api_key,
+                    updated_at = excluded.updated_at
+                """,
+                (user_email, provider, encrypted_key, now)
+            )
+            await conn.commit()
+
+    async def get_user_api_key(self, user_email: str, provider: str) -> Optional[str]:
+        """Retrieve and decrypt an API key for a specific user."""
+        async with self._get_connection() as conn:
+            async with conn.execute(
+                "SELECT api_key FROM user_api_keys WHERE user_email = ? AND provider = ? AND is_active = 1",
+                (user_email, provider)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return decrypt_key(row[0])
+        return None
+
+    async def get_user_api_keys(self, user_email: str) -> Dict[str, str]:
+        """Retrieve all active API keys for a specific user (returns masked keys for UI)."""
+        keys = {}
+        async with self._get_connection() as conn:
+            async with conn.execute(
+                "SELECT provider, api_key FROM user_api_keys WHERE user_email = ? AND is_active = 1",
+                (user_email,)
+            ) as cursor:
+                async for row in cursor:
+                    provider, encrypted_key = row
+                    decrypted = decrypt_key(encrypted_key)
+                    # Mask the key for UI
+                    if decrypted and len(decrypted) > 8:
+                        keys[provider] = f"{decrypted[:4]}...{decrypted[-4:]}"
+                    else:
+                        keys[provider] = "****"
+        return keys
+
+    async def delete_user_api_key(self, user_email: str, provider: str):
+        """Remove an API key for a specific user."""
+        async with self._get_connection() as conn:
+            await conn.execute(
+                "DELETE FROM user_api_keys WHERE user_email = ? AND provider = ?",
+                (user_email, provider)
+            )
+            await conn.commit()
 
     async def get_transcript_config(self):
         """Get the current transcript configuration"""
@@ -823,8 +906,13 @@ class DatabaseManager:
             raise
 
 
-    async def get_transcript_api_key(self, provider: str):
+    async def get_transcript_api_key(self, provider: str, user_email: Optional[str] = None):
         """Get the transcript API key"""
+        if user_email:
+            user_key = await self.get_user_api_key(user_email, provider)
+            if user_key:
+                return user_key
+
         provider_list = ["localWhisper","deepgram","elevenLabs","groq","openai"]
         if provider not in provider_list:
             raise ValueError(f"Invalid provider: {provider}")
