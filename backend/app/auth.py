@@ -43,10 +43,19 @@ async def verify_google_token(token: str) -> Dict[str, Any]:
         )
         return payload
     except JWTError as e:
-        print(f"JWT Verification Error: {e}")
+        error_msg = str(e)
+        print(f"JWT Verification Error: {error_msg}")
+        
+        # provide more descriptive detail for common errors
+        detail = "Invalid authentication credentials"
+        if "exp" in error_msg.lower() or "expired" in error_msg.lower():
+            detail = "Token expired. Please refresh your session."
+        elif "aud" in error_msg.lower() or "audience" in error_msg.lower():
+            detail = "Token audience mismatch. Check GOOGLE_CLIENT_ID."
+            
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            detail=detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -61,17 +70,19 @@ async def get_current_user(
     
     if not GOOGLE_CLIENT_ID:
         print("DEBUG AUTH: GOOGLE_CLIENT_ID is None")
-    else:
-        print(f"DEBUG AUTH: GOOGLE_CLIENT_ID is set (starts with {GOOGLE_CLIENT_ID[:5]})")
+        # Don't fail here, verify_google_token will fail with a better error if needed
     
     try:
         payload = await verify_google_token(token)
         print(f"DEBUG AUTH: Payload extracted for {payload.get('email')}")
+    except HTTPException as e:
+         # Re-raise HTTPExceptions as-is to preserve details
+         raise e
     except Exception as e:
-         print(f"DEBUG AUTH: Verification failed: {str(e)}")
+         print(f"DEBUG AUTH: Unexpected verification error: {str(e)}")
          raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail=f"Could not validate credentials: {str(e)}",
         )
 
     email = payload.get("email")
@@ -82,7 +93,7 @@ async def get_current_user(
     if not email.endswith("@appointy.com"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access restricted to @appointy.com users"
+            detail=f"Access restricted to @appointy.com users (found {email})"
         )
 
     return User(

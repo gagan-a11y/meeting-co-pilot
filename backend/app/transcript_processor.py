@@ -260,35 +260,40 @@ class TranscriptProcessor:
 
         # Create a client and track it for cleanup
         ollama_host = os.getenv('OLLAMA_HOST', 'http://127.0.0.1:11434')
-        client = AsyncClient(host=ollama_host)
-        self.active_clients.append(client)
         
-        try:
-            response = await client.chat(model=model_name, messages=[message], stream=True, format=SummaryResponse.model_json_schema())
-            
-            full_response = ""
-            async for part in response:
-                content = part['message']['content']
-                print(content, end='', flush=True)
-                full_response += content
-            
+        # Use async context manager to ensure client is closed
+        async with AsyncClient(host=ollama_host) as client:
+            self.active_clients.append(client)
             try:
-                summary = SummaryResponse.model_validate_json(full_response)
-                print("\n", summary.model_dump_json(indent=2), type(summary))
-                return summary
+                # Increase timeout for long context processing
+                # Note: ollama client uses httpx, we can try to pass timeout if supported or rely on default
+                response = await client.chat(model=model_name, messages=[message], stream=True, format=SummaryResponse.model_json_schema())
+                
+                full_response = ""
+                async for part in response:
+                    content = part['message']['content']
+                    # Remove stdout print to avoid log noise/issues
+                    # print(content, end='', flush=True)
+                    full_response += content
+                
+                try:
+                    summary = SummaryResponse.model_validate_json(full_response)
+                    # logger.debug(f"Ollama summary: {summary.model_dump_json(indent=2)}")
+                    return summary
+                except Exception as e:
+                    logger.error(f"Error parsing Ollama response: {e}. Raw response: {full_response[:200]}...")
+                    return full_response
+
+            except asyncio.CancelledError:
+                logger.info("Ollama request was cancelled during shutdown")
+                raise
             except Exception as e:
-                print(f"\nError parsing response: {e}")
-                return full_response
-        except asyncio.CancelledError:
-            logger.info("Ollama request was cancelled during shutdown")
-            raise
-        except Exception as e:
-            logger.error(f"Error in Ollama chat: {e}")
-            raise
-        finally:
-            # Remove the client from active clients list
-            if client in self.active_clients:
-                self.active_clients.remove(client)
+                logger.error(f"Error in Ollama chat: {e}")
+                raise
+            finally:
+                # Remove the client from active clients list as it's being closed by context manager
+                if client in self.active_clients:
+                    self.active_clients.remove(client)
 
     async def _needs_linked_context(self, question: str, current_context_snippet: str) -> bool:
         """

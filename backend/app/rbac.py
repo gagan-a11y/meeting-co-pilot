@@ -18,6 +18,10 @@ class RBAC:
         if not user or not user.email:
             return False
 
+        # Allow AI interaction with the current recording (not yet saved in DB)
+        if meeting_id == 'current-recording' and action == 'ai_interact':
+            return True
+
         # 1. Fetch meeting context (Owner, Workspace)
         # We use a lightweight query instead of get_meeting to save bandwidth
         async with self.db._get_connection() as conn:
@@ -28,6 +32,9 @@ class RBAC:
             row = await cursor.fetchone()
             
             if not row:
+                if action in ['ai_interact', 'view']:
+                    logger.warning(f"RBAC: Meeting {meeting_id} not found in DB, but allowing '{action}' (assuming new/temp meeting)")
+                    return True
                 logger.warning(f"RBAC: Meeting {meeting_id} not found")
                 return False
                 

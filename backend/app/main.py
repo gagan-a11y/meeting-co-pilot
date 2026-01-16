@@ -1061,8 +1061,24 @@ Use this context to better understand the meeting participants, purpose, and imp
 
 """
         
-        # Create comprehensive prompt for note generation
-        prompt = f"""You are an expert meeting notes generator. Generate well-structured meeting notes in Markdown format based on the following transcript.
+        # CHUNKING LOGIC
+        # Split transcript into chunks to avoid output token limits/truncation
+        chunk_size = 40000 
+        chunks = [transcript_text[i:i+chunk_size] for i in range(0, len(transcript_text), chunk_size)]
+        
+        full_markdown_notes = ""
+        logger.info(f"Processing transcript in {len(chunks)} chunks (size: {chunk_size})")
+
+        for i, chunk in enumerate(chunks):
+            is_first = (i == 0)
+            part_label = f"Part {i+1}/{len(chunks)}"
+            
+            logger.info(f"Generating notes for {part_label}...")
+            
+            # Create comprehensive prompt for note generation
+            prompt = f"""You are an expert meeting notes generator. Generate well-structured meeting notes in Markdown format based on the following transcript segment.
+
+This is {part_label} of the meeting.
 
 Template Instructions:
 {template_instructions}
@@ -1085,16 +1101,18 @@ Generate the notes in Markdown format with the following structure:
 - Be concise but comprehensive
 - NEVER use code blocks (``` or ```) in the output - use plain text or bullet points instead
 
-Meeting Title: {meeting_title}
+Meeting Title: {meeting_title} ({part_label})
 
-Transcript:
+Transcript Segment:
 ---
-{transcript_text}
+{chunk}
 ---
 
-Generate comprehensive meeting notes in Markdown format. At the END of the notes, add a section:
+Generate comprehensive meeting notes in Markdown format for THIS SEGMENT only. 
+{'Include a main title.' if is_first else 'Do NOT include a main title (start with ## Section).'}
+At the END of the notes, add a section:
 
-## 📝 Transcription Corrections
+## 📝 Transcription Corrections ({part_label})
 List any significant spelling/word corrections you made from the original transcript. Format as:
 - "original word/phrase" → "corrected word/phrase" (reason if not obvious)
 
@@ -1102,16 +1120,22 @@ Only include corrections that meaningfully affect understanding (skip minor typo
 
 Now generate the meeting notes:"""
         
-        # Generate notes with Gemini
-        response = await model.generate_content_async(prompt)
+            try:
+                # Generate notes with Gemini
+                response = await model.generate_content_async(prompt)
+                
+                if not response or not response.text:
+                    error_msg = f"Gemini returned empty response for chunk {i+1}"
+                    logger.error(error_msg)
+                    full_markdown_notes += f"\n\n[Error: Could not generate notes for {part_label}]\n\n"
+                    continue
+                
+                full_markdown_notes += response.text.strip() + "\n\n"
+            except Exception as e:
+                logger.error(f"Error processing chunk {i+1}: {str(e)}")
+                full_markdown_notes += f"\n\n[Error processing {part_label}: {str(e)}]\n\n"
         
-        if not response or not response.text:
-            error_msg = "Gemini returned empty response"
-            logger.error(error_msg)
-            await processor.db.update_process(process_id, status="failed", error=error_msg)
-            return
-        
-        markdown_notes = response.text.strip()
+        markdown_notes = full_markdown_notes.strip()
         
         # Extract meeting title if generated
         meeting_name = meeting_title
@@ -1402,6 +1426,15 @@ async def websocket_streaming_audio(websocket: WebSocket, session_id: Optional[s
         else:
             logger.info(f"[Streaming] Final: {data['text'][:50]}... (reason: {data.get('reason')})")
 
+    async def on_error(message: str):
+        """Send error message to browser"""
+        await websocket.send_json({
+            "type": "error",
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        logger.warning(f"[Streaming] Error sent to client: {message}")
+
     try:
         chunk_count = 0
 
@@ -1422,7 +1455,8 @@ async def websocket_streaming_audio(websocket: WebSocket, session_id: Optional[s
             await manager.process_audio_chunk(
                 audio_data=audio_chunk,
                 on_partial=on_partial,
-                on_final=on_final
+                on_final=on_final,
+                on_error=on_error
             )
 
     except WebSocketDisconnect:

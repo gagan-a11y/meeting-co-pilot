@@ -436,7 +436,7 @@ class DatabaseManager:
                 cursor = conn.cursor()
 
                 # Check if meeting exists
-                cursor.execute("SELECT id FROM meetings WHERE id = ? OR title = ?", (meeting_id, title))
+                cursor.execute("SELECT id FROM meetings WHERE id = ?", (meeting_id,))
                 existing_meeting = cursor.fetchone()
 
                 if not existing_meeting:

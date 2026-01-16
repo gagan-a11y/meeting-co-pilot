@@ -938,6 +938,12 @@ export default function Home() {
         }
       }
 
+      // Safety limit: only take last 1000 transcripts to avoid payload too large errors
+      if (filteredTranscripts.length > 1000) {
+        console.warn('[CatchUp] Limiting to last 1000 transcripts to avoid payload issues');
+        filteredTranscripts = filteredTranscripts.slice(-1000);
+      }
+
       const transcriptTexts = filteredTranscripts.map(t => t.text);
 
       const timeLabel = minutes ? `last ${minutes} minutes` : 'entire meeting';
@@ -946,17 +952,16 @@ export default function Home() {
       // The catch-up endpoint currently only supports gemini and groq
       const supportedProviders = ['gemini', 'groq'];
       let provider = modelConfig?.provider || 'gemini';
-      let modelName = modelConfig?.model || 'gemini-3-flash';
+      let modelName = modelConfig?.model || 'gemini-2.0-flash';
 
       if (!supportedProviders.includes(provider)) {
         console.warn(`[CatchUp] Unsupported provider "${provider}" selected. Falling back to Gemini.`);
         provider = 'gemini';
-        modelName = 'gemini-3-flash-preview';
+        modelName = 'gemini-2.0-flash';
       }
 
-      const response = await fetch(`${serverAddress}/catch-up`, {
+      const response = await authFetch('/catch-up', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcripts: transcriptTexts,
           model: provider,
@@ -985,6 +990,10 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Catch-up error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      toast.error('Catch Up Failed', {
+        description: `Could not generate summary: ${errorMessage}. Please try again.`
+      });
       setCatchUpSummary('Error getting catch-up summary. Please try again.');
     } finally {
       setIsCatchUpLoading(false);

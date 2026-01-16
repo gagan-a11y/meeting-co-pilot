@@ -3,7 +3,7 @@ Groq API client for streaming Whisper transcription.
 Supports Hindi + English with low latency.
 """
 
-from groq import Groq
+from groq import Groq, RateLimitError
 import os
 import logging
 import io
@@ -164,6 +164,13 @@ class GroqTranscriptionClient:
                     "original_text": None
                 }
 
+        except RateLimitError as e:
+            logger.error(f"❌ Groq Rate Limit Reached: {e}")
+            return {
+                "text": "",
+                "confidence": 0.0,
+                "error": "rate_limit_exceeded"
+            }
         except Exception as e:
             logger.error(f"❌ Groq transcription error: {e}")
             return {

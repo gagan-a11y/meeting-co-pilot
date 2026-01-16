@@ -100,7 +100,8 @@ class StreamingTranscriptionManager:
         self,
         audio_data: bytes,
         on_partial: Optional[Callable] = None,
-        on_final: Optional[Callable] = None
+        on_final: Optional[Callable] = None,
+        on_error: Optional[Callable] = None
     ):
         """
         Process incoming audio chunk.
@@ -109,6 +110,7 @@ class StreamingTranscriptionManager:
             audio_data: Raw PCM audio bytes (16kHz, mono, 16-bit)
             on_partial: Callback for partial transcripts
             on_final: Callback for final transcripts
+            on_error: Callback for error messages
         """
         start_time = time.time()
 
@@ -160,7 +162,11 @@ class StreamingTranscriptionManager:
                     True  # translate_to_english=True
                 )
 
-                if result["text"]:
+                if result.get("error") == "rate_limit_exceeded":
+                    logger.warning("⚠️ Groq Rate Limit Exceeded")
+                    if on_error:
+                        await on_error("Groq API Rate Limit Reached. Please wait a moment or check your plan.")
+                elif result["text"]:
                     self.total_transcriptions += 1
                     await self._handle_transcript(
                         text=result["text"],
