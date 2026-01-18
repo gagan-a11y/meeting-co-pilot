@@ -835,7 +835,7 @@ Current Meeting Notes:
 User Instruction: {request.user_instruction}
 
 Guidelines:
-1. You MUST start your response with a brief summary of changes (e.g., "I've removed...").
+1. You MUST start your response with a detailed bulleted list of changes made (e.g., "Fixed typo in 'deadline' (was 'dealine')", "Changed tone of 'Next Steps' to be more formal").
 2. You MUST then output exactly: "|||SEPARATOR|||" (without quotes).
 3. After the separator, provide the FULL updated notes content.
 4. Do NOT wrap the output in markdown code blocks like ```markdown ... ```.
@@ -843,7 +843,7 @@ Guidelines:
 6. Use the Transcript to ensure accuracy if adding details.
 
 Strict Output Structure:
-[Brief Summary of Changes]
+[Detailed bulleted list of changes]
 |||SEPARATOR|||
 [Full Updated Notes Markdown Content]"""
 
