@@ -1,5 +1,5 @@
 /**
- * Centralized Configuration for Meeting Co-Pilot
+ * Centralized Configuration for Pnyx
  * 
  * Automatically switches between development and production URLs
  * based on NODE_ENV environment variable.

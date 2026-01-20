@@ -50,7 +50,12 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],     # Allow all origins for testing
+    allow_origins=[
+        "http://localhost:3118",
+        "http://localhost:3000",
+        "https://pnyxx.vercel.app",
+        "https://meet.digest.lat"
+    ],
     allow_credentials=True,
     allow_methods=["*"],     # Allow all methods
     allow_headers=["*"],     # Allow all headers
