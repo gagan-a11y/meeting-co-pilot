@@ -417,6 +417,21 @@ async def process_transcript_background(process_id: str, transcript: TranscriptR
         if final_summary["MeetingName"]:
             await processor.db.update_meeting_name(transcript.meeting_id, final_summary["MeetingName"])
 
+        # Store embeddings for cross-meeting search
+        try:
+            from vector_store import store_meeting_embeddings
+            # Use chunks from the transcript text
+            transcript_dicts = [{"text": transcript.text, "timestamp": datetime.now().isoformat()}]
+            chunks_stored = await store_meeting_embeddings(
+                meeting_id=transcript.meeting_id,
+                meeting_title=final_summary.get("MeetingName") or "Uploaded Transcript",
+                meeting_date=datetime.now().isoformat(),
+                transcripts=transcript_dicts
+            )
+            logger.info(f"✅ Stored {chunks_stored} embedding chunks for cross-meeting search")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to store embeddings (non-critical): {e}")
+
         # Save final result
         if all_json_data:
             await processor.db.update_process(process_id, status="completed", result=json.dumps(final_summary))
