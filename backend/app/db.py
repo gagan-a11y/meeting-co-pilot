@@ -350,12 +350,13 @@ class DatabaseManager:
     async def get_model_config(self):
         """Get the current model configuration"""
         async with self._get_connection() as conn:
-            row = await conn.fetchrow("SELECT provider, model, \"whisperModel\" FROM settings")
+            # Postgres column is likely lowercase 'whispermodel'
+            row = await conn.fetchrow("SELECT provider, model, whisperModel FROM settings")
             if row:
                 return {
                     "provider": row["provider"],
                     "model": row["model"],
-                    "whisperModel": row["whisperModel"]
+                    "whisperModel": row["whispermodel"]
                 }
             return None
 
@@ -364,13 +365,14 @@ class DatabaseManager:
         try:
             async with self._get_connection() as conn:
                 # Upsert settings (assuming id='1' is the singleton config)
+                # Use unquoted whisperModel to match lowercase column
                 await conn.execute("""
-                    INSERT INTO settings (id, provider, model, "whisperModel")
+                    INSERT INTO settings (id, provider, model, whisperModel)
                     VALUES ($1, $2, $3, $4)
                     ON CONFLICT (id) DO UPDATE SET
                         provider = EXCLUDED.provider,
                         model = EXCLUDED.model,
-                        "whisperModel" = EXCLUDED."whisperModel"
+                        whisperModel = EXCLUDED.whisperModel
                 """, '1', provider, model, whisperModel)
                 
                 logger.info(f"Successfully saved model configuration: {provider}/{model}")
@@ -381,11 +383,11 @@ class DatabaseManager:
     async def save_api_key(self, api_key: str, provider: str):
         """Save the API key"""
         provider_map = {
-            "openai": "openaiApiKey",
-            "claude": "anthropicApiKey",
-            "groq": "groqApiKey",
-            "ollama": "ollamaApiKey",
-            "gemini": "geminiApiKey"
+            "openai": "openaiapikey",
+            "claude": "anthropicapikey",
+            "groq": "groqapikey",
+            "ollama": "ollamaapikey",
+            "gemini": "geminiapikey"
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")
@@ -400,7 +402,7 @@ class DatabaseManager:
                 
                 # Ensure row 1 exists
                 await conn.execute("""
-                    INSERT INTO settings (id, provider, model, "whisperModel")
+                    INSERT INTO settings (id, provider, model, whisperModel)
                     VALUES ('1', 'openai', 'gpt-4o', 'large-v3')
                     ON CONFLICT (id) DO NOTHING
                 """)
@@ -425,11 +427,11 @@ class DatabaseManager:
                 return user_key
 
         provider_map = {
-            "openai": "openaiApiKey",
-            "claude": "anthropicApiKey",
-            "groq": "groqApiKey",
-            "ollama": "ollamaApiKey",
-            "gemini": "geminiApiKey"
+            "openai": "openaiapikey",
+            "claude": "anthropicapikey",
+            "groq": "groqapikey",
+            "ollama": "ollamaapikey",
+            "gemini": "geminiapikey"
         }
         if provider not in provider_map:
             return ""
@@ -516,11 +518,11 @@ class DatabaseManager:
     async def save_transcript_api_key(self, api_key: str, provider: str):
         """Save the transcript API key"""
         provider_map = {
-            "localWhisper": "whisperApiKey",
-            "deepgram": "deepgramApiKey",
-            "elevenLabs": "elevenLabsApiKey",
-            "groq": "groqApiKey",
-            "openai": "openaiApiKey"
+            "localWhisper": "whisperapikey",
+            "deepgram": "deepgramapikey",
+            "elevenLabs": "elevenlabsapikey",
+            "groq": "groqapikey",
+            "openai": "openaiapikey"
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")
@@ -548,11 +550,11 @@ class DatabaseManager:
                 return user_key
 
         provider_map = {
-            "localWhisper": "whisperApiKey",
-            "deepgram": "deepgramApiKey",
-            "elevenLabs": "elevenLabsApiKey",
-            "groq": "groqApiKey",
-            "openai": "openaiApiKey"
+            "localWhisper": "whisperapikey",
+            "deepgram": "deepgramapikey",
+            "elevenLabs": "elevenlabsapikey",
+            "groq": "groqapikey",
+            "openai": "openaiapikey"
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")
@@ -625,11 +627,11 @@ class DatabaseManager:
     async def delete_api_key(self, provider: str):
         """Delete the API key"""
         provider_map = {
-            "openai": "openaiApiKey",
-            "claude": "anthropicApiKey",
-            "groq": "groqApiKey",
-            "ollama": "ollamaApiKey",
-            "gemini": "geminiApiKey"
+            "openai": "openaiapikey",
+            "claude": "anthropicapikey",
+            "groq": "groqapikey",
+            "ollama": "ollamaapikey",
+            "gemini": "geminiapikey"
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")

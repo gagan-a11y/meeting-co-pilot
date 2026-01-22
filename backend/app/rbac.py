@@ -26,11 +26,10 @@ class RBAC:
         # We use a lightweight query instead of get_meeting to save bandwidth
         try:
             async with self.db._get_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT owner_id, workspace_id FROM meetings WHERE id = ?", 
-                    (meeting_id,)
+                row = await conn.fetchrow(
+                    "SELECT owner_id, workspace_id FROM meetings WHERE id = $1", 
+                    meeting_id
                 )
-                row = await cursor.fetchone()
                 if not row:
                     # FALLBACK: If meeting doesn't exist in DB yet, but we're doing ai_interact,
                     # it might be a newly created meeting that hasn't been saved yet.
@@ -42,7 +41,7 @@ class RBAC:
                     logger.warning(f"RBAC: Meeting {meeting_id} not found")
                     return False
                 
-                owner_id, workspace_id = row
+                owner_id, workspace_id = row['owner_id'], row['workspace_id']
             
             logger.info(f"RBAC Check: user={user.email}, action={action}, meeting={meeting_id}, owner={owner_id}")
             
@@ -61,12 +60,11 @@ class RBAC:
         if workspace_id:
             try:
                 async with self.db._get_connection() as conn:
-                    cursor = await conn.execute(
-                        "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
-                        (workspace_id, user.email)
+                    member_row = await conn.fetchrow(
+                        "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
+                        workspace_id, user.email
                     )
-                    member_row = await cursor.fetchone()
-                    if member_row and member_row[0] == 'admin':
+                    if member_row and member_row['role'] == 'admin':
                         return True
             except Exception as e:
                 logger.error(f"RBAC Workspace check error: {str(e)}")
@@ -74,16 +72,15 @@ class RBAC:
         # 4. Check Explicit Permissions
         try:
             async with self.db._get_connection() as conn:
-                cursor = await conn.execute(
-                    "SELECT role FROM meeting_permissions WHERE meeting_id = ? AND user_id = ?",
-                    (meeting_id, user.email)
+                perm_row = await conn.fetchrow(
+                    "SELECT role FROM meeting_permissions WHERE meeting_id = $1 AND user_id = $2",
+                    meeting_id, user.email
                 )
-                perm_row = await cursor.fetchone()
             
             if not perm_row:
                 return False
             
-            role = perm_row[0]
+            role = perm_row['role']
             
             # 5. Resolve based on Role & Action
             # viewer: view
@@ -122,23 +119,24 @@ class RBAC:
         #    Workspace Admin gives ALL access.
         # 4. Explicitly invited meetings (Personal or Workspace) via meeting_permissions.
         
+        # Ensure clean query string
         query = """
             SELECT m.id 
             FROM meetings m
-            LEFT JOIN workspace_members wm ON m.workspace_id = wm.workspace_id AND wm.user_id = ?
-            LEFT JOIN meeting_permissions mp ON m.id = mp.meeting_id AND mp.user_id = ?
+            LEFT JOIN workspace_members wm ON m.workspace_id = wm.workspace_id AND wm.user_id = $1
+            LEFT JOIN meeting_permissions mp ON m.id = mp.meeting_id AND mp.user_id = $2
             WHERE 
-                m.owner_id = ?                  -- 1. Owner
-                OR m.owner_id IS NULL           -- 1b. Legacy (No owner)
-                OR (wm.role = 'admin')          -- 2. Workspace Admin
-                OR (mp.role IS NOT NULL)        -- 3. Explicit Invite
+                m.owner_id = $3
+                OR m.owner_id IS NULL
+                OR (wm.role = 'admin')
+                OR (mp.role IS NOT NULL)
         """
         # Note: If meeting has NO workspace_id (Personal), wm.role will be null.
         
         accessible_ids = []
         async with self.db._get_connection() as conn:
-            cursor = await conn.execute(query, (user.email, user.email, user.email))
-            rows = await cursor.fetchall()
-            accessible_ids = [r[0] for r in rows]
+            # Using fetch because we expect rows. execute returns a status string.
+            rows = await conn.fetch(query, user.email, user.email, user.email)
+            accessible_ids = [r['id'] for r in rows]
             
         return accessible_ids

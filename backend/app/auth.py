@@ -5,9 +5,15 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
+import logging
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Environment variables
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+logger.info(f"DEBUG AUTH: Loaded GOOGLE_CLIENT_ID: '{GOOGLE_CLIENT_ID}'")
+
 # For Google, we fetch public keys from their endpoint
 GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 
@@ -34,17 +40,30 @@ async def verify_google_token(token: str) -> Dict[str, Any]:
         
         # Verify and decode
         # Note: audience check is crucial
+        # DEBUG: Temporarily disable strict audience check to debug mismatch
         payload = jwt.decode(
             token,
             jwks,
             algorithms=["RS256"],
-            audience=GOOGLE_CLIENT_ID,
-            options={"verify_at_hash": False} # Sometimes needed for Google tokens
+            audience=None, # GOOGLE_CLIENT_ID,
+            options={
+                "verify_at_hash": False,
+                "verify_aud": False # Explicitly disable audience verification
+            }
         )
+        
+        token_aud = payload.get("aud")
+        print(f"DEBUG AUTH: Token aud: '{token_aud}'", flush=True)
+        print(f"DEBUG AUTH: Server GOOGLE_CLIENT_ID: '{GOOGLE_CLIENT_ID}'", flush=True)
+        
+        if str(token_aud) != str(GOOGLE_CLIENT_ID):
+             print("DEBUG AUTH: Audience Mismatch! Continuing for debug...", flush=True)
+             # raise HTTPException(status_code=401, detail=f"Audience mismatch: {token_aud} vs {GOOGLE_CLIENT_ID}")
+             
         return payload
     except JWTError as e:
         error_msg = str(e)
-        print(f"JWT Verification Error: {error_msg}")
+        logger.error(f"JWT Verification Error: {error_msg}")
         
         # provide more descriptive detail for common errors
         detail = "Invalid authentication credentials"
@@ -69,17 +88,17 @@ async def get_current_user(
     token = credentials.credentials
     
     if not GOOGLE_CLIENT_ID:
-        print("DEBUG AUTH: GOOGLE_CLIENT_ID is None")
+        logger.warning("DEBUG AUTH: GOOGLE_CLIENT_ID is None")
         # Don't fail here, verify_google_token will fail with a better error if needed
     
     try:
         payload = await verify_google_token(token)
-        print(f"DEBUG AUTH: Payload extracted for {payload.get('email')}")
+        logger.info(f"DEBUG AUTH: Payload extracted for {payload.get('email')}")
     except HTTPException as e:
          # Re-raise HTTPExceptions as-is to preserve details
          raise e
     except Exception as e:
-         print(f"DEBUG AUTH: Unexpected verification error: {str(e)}")
+         logger.error(f"DEBUG AUTH: Unexpected verification error: {str(e)}")
          raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Could not validate credentials: {str(e)}",

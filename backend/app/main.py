@@ -986,11 +986,17 @@ async def get_summary(meeting_id: str, current_user: User = Depends(get_current_
         summary_data = None
         if result.get("result"):
             try:
-                parsed_result = json.loads(result["result"])
-                if isinstance(parsed_result, str):
-                    summary_data = json.loads(parsed_result)
+                # Check if result is already a dict (handled by asyncpg jsonb)
+                if isinstance(result["result"], dict):
+                    summary_data = result["result"]
                 else:
-                    summary_data = parsed_result
+                    # Otherwise parse string
+                    parsed_result = json.loads(result["result"])
+                    if isinstance(parsed_result, str):
+                        summary_data = json.loads(parsed_result)
+                    else:
+                        summary_data = parsed_result
+                
                 if not isinstance(summary_data, dict):
                     logger.error(f"Parsed summary data is not a dictionary for meeting {meeting_id}")
                     summary_data = None
@@ -1056,12 +1062,18 @@ async def get_summary(meeting_id: str, current_user: User = Depends(get_current_
                             # Only add to _section_order if the section was successfully added
                             transformed_data["_section_order"].append(key)
 
+        # Helper to safely serialize datetime
+        def serialize_dt(dt):
+            if isinstance(dt, datetime):
+                return dt.isoformat()
+            return dt
+
         response = {
             "status": "processing" if status in ["processing", "pending", "started"] else status,
             "meetingName": summary_data.get("MeetingName") if isinstance(summary_data, dict) else None,
             "meeting_id": meeting_id,
-            "start": result.get("start_time"),
-            "end": result.get("end_time"),
+            "start": serialize_dt(result.get("start_time")),
+            "end": serialize_dt(result.get("end_time")),
             "data": transformed_data if status == "completed" else None
         }
 
@@ -1354,6 +1366,17 @@ async def save_transcript(request: SaveTranscriptRequest, background_tasks: Back
                 duration=transcript.duration
             )
             full_transcript_text += transcript.text + "\n"
+
+        # Also save to full_transcripts table for consistency with process-transcript flow
+        if full_transcript_text.strip():
+            await db.save_transcript(
+                meeting_id=meeting_id,
+                transcript_text=full_transcript_text,
+                model="user-recording",
+                model_name="user-recording",
+                chunk_size=0,
+                overlap=0
+            )
 
         logger.info("Transcripts saved successfully")
         
