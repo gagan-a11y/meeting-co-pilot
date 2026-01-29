@@ -2468,8 +2468,8 @@ async def upload_meeting_recording(
     await db.save_meeting(
         meeting_id=meeting_id,
         title=meeting_title,
-        owner_id=current_user.id if current_user else "default",
-        workspace_id=current_user.workspace_id if current_user else "default",
+        owner_id=current_user.email if current_user else "default",
+        workspace_id="default",
     )
 
     # 2. Save file temporarily
