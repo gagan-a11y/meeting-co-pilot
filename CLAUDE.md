@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **This project is transitioning from Meetily (Tauri desktop app) to Meeting Co-Pilot (web-based collaborative meeting assistant).**
 
-**Current Status**: **Phase 1.5 Complete** - Real-Time Groq Streaming Transcription Integrated (Jan 5, 2026)
+**Current Status**: **Phase 5 In Progress** - Transcript Versioning & Diarization Integrated (Jan 29, 2026)
 
 ---
 
@@ -278,21 +278,39 @@ pnpm run dev        # ✅ Use this - runs Next.js at http://localhost:3118
 - WebSocket rooms for real-time sync
 - Participant list and presence
 
-### Phase 3: AI Features (4-5 days)
-- Real-time decision/action extraction
-- "Catch me up" feature
-- Real-time Q&A with AI
-- Current topic identification
+### Phase 3: AI Features (✅ Partially Complete)
+- [x] Real-time decision/action extraction (via summarization)
+- [x] "Catch me up" feature (via Chat Interface)
+- [x] Real-time Q&A with AI (ChatInterface implemented)
+- [ ] Current topic identification
 
-### Phase 4: Cross-Meeting Context (3-4 days)
-- VectorDB for meeting embeddings
-- Meeting linking
-- Continuity recaps
+### Phase 4: Cross-Meeting Context (⚠️ In Progress)
+- [x] VectorDB setup (PGVector/Neon)
+- [x] Embedding storage for transcripts
+- [ ] Meeting linking
+- [ ] Continuity recaps
 
-### Phase 5: Post-Meeting & Polish (3-4 days)
-- Summary generation
-- Export (Markdown/PDF)
-- Meeting history & search
+### Phase 5: Post-Meeting & Polish (✅ In Progress)
+- [x] Summary generation (LLM integrated)
+- [x] Transcript Versioning (Live vs Diarized)
+- [x] Speaker Diarization (Deepgram/AssemblyAI)
+- [ ] Export (Markdown/PDF)
+- [ ] Meeting history & search
+
+### Phase 6: Import Recording (📋 New Priority)
+**Goal**: Allow users to upload existing audio/video files to generate transcripts and notes.
+
+**Workflow**:
+1. User uploads file (mp3/wav/m4a/mp4)
+2. Backend converts to standardized WAV
+3. Process via existing pipeline (Whisper -> Diarization -> Summary)
+4. Create new meeting entry with imported data
+
+**Technical Approach**:
+- New Endpoint: `POST /upload-meeting-recording`
+- FFmpeg for file conversion
+- Background processing task
+- Polling/WebSocket for progress status
 
 ## Architecture Diagrams
 
