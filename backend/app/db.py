@@ -411,7 +411,7 @@ class DatabaseManager:
                         meeting_id,
                         version_num,
                         source,
-                        json.dumps(content),
+                        json.dumps(content, default=str),  # Handle datetimes
                         is_authoritative,
                         created_by,
                         json.dumps(alignment_config or {}),

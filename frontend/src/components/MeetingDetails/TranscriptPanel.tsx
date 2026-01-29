@@ -39,6 +39,21 @@ export function TranscriptPanel({
     if (!meetingId || !onTranscriptsUpdate) return;
 
     try {
+      // Handle switching to Live Transcript
+      if (versionNum === -1) {
+        const response = await authFetch(`/get-meeting/${meetingId}`);
+        if (!response.ok) throw new Error('Failed to fetch live version');
+        
+        const data = await response.json();
+        if (data.transcripts) {
+          onTranscriptsUpdate(data.transcripts);
+          setCurrentVersion(undefined);
+          toast.success('Switched to Live Transcript');
+        }
+        return;
+      }
+
+      // Handle switching to specific version
       const response = await authFetch(`/meetings/${meetingId}/versions/${versionNum}`);
       if (!response.ok) throw new Error('Failed to fetch version');
       
@@ -60,12 +75,32 @@ export function TranscriptPanel({
       {/* Title area */}
       <div className="p-4 border-b border-gray-200">
         {meetingId && onTranscriptsUpdate && (
-          <TranscriptVersionSelector 
-            meetingId={meetingId} 
-            onVersionChange={handleVersionChange}
-            currentVersionNum={currentVersion}
-            refreshTrigger={diarizationStatus} // Pass status as trigger
-          />
+          <div className="mb-4">
+            <TranscriptVersionSelector 
+              meetingId={meetingId} 
+              onVersionChange={handleVersionChange}
+              currentVersionNum={currentVersion ?? -1}
+              refreshTrigger={diarizationStatus} // Pass status as trigger
+            />
+            {/* Alignment Legend - Moved inside header */}
+            {(diarizationStatus === 'completed' || currentVersion !== undefined) && (
+              <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
+                <span className="font-medium">Legend:</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                  <span>Confident</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full bg-yellow-500"></div>
+                  <span>Uncertain</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full bg-orange-500"></div>
+                  <span>Overlap</span>
+                </div>
+              </div>
+            )}
+          </div>
         )}
         <TranscriptButtonGroup
           transcriptCount={transcripts?.length || 0}
@@ -78,7 +113,7 @@ export function TranscriptPanel({
       </div>
 
       {/* Transcript content */}
-      <div className="flex-1 overflow-y-auto pb-4">
+      <div className="flex-1 overflow-y-auto pb-4 relative">
         <TranscriptView 
           transcripts={transcripts} 
           speakerMap={speakerMap} 

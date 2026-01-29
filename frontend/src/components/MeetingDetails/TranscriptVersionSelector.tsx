@@ -52,10 +52,10 @@ export function TranscriptVersionSelector({
     }
   };
 
-  if (loading || versions.length === 0) return null;
+  if (loading) return null;
 
   return (
-    <div className="flex items-center gap-2 mb-4">
+    <div className="flex items-center gap-2">
       <span className="text-sm font-medium text-gray-700">Version:</span>
       <Select
         value={currentVersionNum?.toString()}
@@ -65,6 +65,12 @@ export function TranscriptVersionSelector({
           <SelectValue placeholder="Select version" />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value="-1">
+            <div className="flex items-center justify-between w-full gap-2">
+              <span>Live Transcript</span>
+              <Badge variant="outline" className="ml-2 text-xs">Current</Badge>
+            </div>
+          </SelectItem>
           {versions.map((v) => (
             <SelectItem key={v.version_num} value={v.version_num.toString()}>
               <div className="flex items-center justify-between w-full gap-2">
