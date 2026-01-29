@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **This project is transitioning from Meetily (Tauri desktop app) to Meeting Co-Pilot (web-based collaborative meeting assistant).**
 
-**Current Status**: **Phase 5 In Progress** - Transcript Versioning & Diarization Integrated (Jan 29, 2026)
+**Current Status**: **Phase 6 In Progress** - Import Recording Feature (Jan 29, 2026)
 
 ---
 
@@ -290,14 +290,14 @@ pnpm run dev        # ✅ Use this - runs Next.js at http://localhost:3118
 - [ ] Meeting linking
 - [ ] Continuity recaps
 
-### Phase 5: Post-Meeting & Polish (✅ In Progress)
+### Phase 5: Post-Meeting & Polish (✅ Complete)
 - [x] Summary generation (LLM integrated)
 - [x] Transcript Versioning (Live vs Diarized)
 - [x] Speaker Diarization (Deepgram/AssemblyAI)
-- [ ] Export (Markdown/PDF)
-- [ ] Meeting history & search
+- [ ] Export (Markdown/PDF) - Moved to Phase 7
+- [ ] Meeting history & search - Moved to Phase 7
 
-### Phase 6: Import Recording (📋 New Priority)
+### Phase 6: Import Recording (📋 In Progress)
 **Goal**: Allow users to upload existing audio/video files to generate transcripts and notes.
 
 **Workflow**:
