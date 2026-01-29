@@ -3122,9 +3122,13 @@ async def get_diarization_status(
         from pathlib import Path
 
         recording_path = Path(f"./data/recordings/{meeting_id}")
-        has_audio = recording_path.exists() and bool(
-            list(recording_path.glob("chunk_*.pcm"))
-        )
+
+        # Check for chunks or merged files
+        has_chunks = bool(list(recording_path.glob("chunk_*.pcm")))
+        has_merged = (recording_path / "merged_recording.pcm").exists() or (
+            recording_path / "merged_recording.wav"
+        ).exists()
+        has_audio = recording_path.exists() and (has_chunks or has_merged)
 
         if not has_audio:
             return DiarizationStatusResponse(
