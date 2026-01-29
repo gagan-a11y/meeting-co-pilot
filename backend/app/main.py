@@ -2542,7 +2542,18 @@ async def diarize_meeting(
 
         recording_path = Path(f"./data/recordings/{meeting_id}")
 
-        if not recording_path.exists() or not list(recording_path.glob("chunk_*.pcm")):
+        if not recording_path.exists():
+            raise HTTPException(
+                status_code=400,
+                detail="No audio recording directory found.",
+            )
+
+        has_chunks = bool(list(recording_path.glob("chunk_*.pcm")))
+        has_merged = (recording_path / "merged_recording.pcm").exists() or (
+            recording_path / "merged_recording.wav"
+        ).exists()
+
+        if not has_chunks and not has_merged:
             raise HTTPException(
                 status_code=400,
                 detail="No audio recording found for this meeting. Enable recording first.",
