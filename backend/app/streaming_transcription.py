@@ -220,7 +220,18 @@ class StreamingTranscriptionManager:
                     logger.warning("⚠️ Groq Rate Limit Exceeded")
                     if on_error:
                         await on_error(
-                            "Groq API Rate Limit Reached. Please wait a moment or check your plan."
+                            "Groq API Rate Limit Reached. Please wait a moment or check your plan.",
+                            code="GROQ_RATE_LIMIT",
+                        )
+                elif result.get("error") and (
+                    "401" in str(result.get("error"))
+                    or "invalid_api_key" in str(result.get("error"))
+                ):
+                    logger.error("❌ Groq Invalid API Key")
+                    if on_error:
+                        await on_error(
+                            "Groq API Key is invalid or missing. Please check your settings.",
+                            code="GROQ_KEY_REQUIRED",
                         )
                 elif result["text"]:
                     self.total_transcriptions += 1

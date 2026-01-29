@@ -2157,15 +2157,17 @@ async def websocket_streaming_audio(
         except Exception:
             pass
 
-    async def on_error(message: str):
+    async def on_error(message: str, code: Optional[str] = None):
         try:
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "message": message,
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
-            )
+            error_payload = {
+                "type": "error",
+                "message": message,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            if code:
+                error_payload["code"] = code
+
+            await websocket.send_json(error_payload)
         except Exception:
             pass
 
