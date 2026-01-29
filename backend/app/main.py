@@ -29,6 +29,7 @@ from transcript_processor import TranscriptProcessor
 import time
 import uuid
 from pathlib import Path
+import aiofiles
 from datetime import datetime
 
 from fastapi import Depends, status
