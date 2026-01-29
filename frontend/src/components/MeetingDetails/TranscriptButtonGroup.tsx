@@ -13,6 +13,7 @@ interface TranscriptButtonGroupProps {
   onDiarize?: () => void;
   diarizationStatus?: string;
   isDiarizing?: boolean;
+  isRecording?: boolean;
 }
 
 
@@ -22,18 +23,19 @@ export function TranscriptButtonGroup({
   onOpenMeetingFolder,
   onDiarize,
   diarizationStatus,
-  isDiarizing
+  isDiarizing,
+  isRecording
 }: TranscriptButtonGroupProps) {
   return (
     <div className="flex items-center justify-between w-full">
       <div className="flex gap-2">
-        {onDiarize && diarizationStatus !== 'not_recorded' && (
+        {onDiarize && (
           <Button
             size="sm"
             variant={diarizationStatus === 'completed' ? "outline" : (diarizationStatus === 'processing' ? "secondary" : "default")}
             className={diarizationStatus === 'completed' ? "" : "bg-indigo-600 hover:bg-indigo-700 text-white"}
             onClick={onDiarize}
-            disabled={isDiarizing || diarizationStatus === 'processing' || diarizationStatus === 'completed'}
+            disabled={isDiarizing || diarizationStatus === 'processing' || isRecording}
           >
             {isDiarizing || diarizationStatus === 'processing' ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -42,7 +44,7 @@ export function TranscriptButtonGroup({
             )}
             <span className="hidden lg:inline">
               {diarizationStatus === 'processing' ? 'Identifying...' :
-                (diarizationStatus === 'completed' ? 'Speakers Identified' : 
+                (diarizationStatus === 'completed' ? 'Re-identify Speakers' : 
                  (diarizationStatus === 'failed' ? 'Failed (Retry)' : 'Identify Speakers'))}
             </span>
           </Button>

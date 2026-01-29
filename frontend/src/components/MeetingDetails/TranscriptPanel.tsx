@@ -109,6 +109,7 @@ export function TranscriptPanel({
           onDiarize={onDiarize}
           diarizationStatus={diarizationStatus}
           isDiarizing={isDiarizing}
+          isRecording={isRecording}
         />
       </div>
 

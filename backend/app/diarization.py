@@ -17,6 +17,7 @@ import httpx
 import logging
 import os
 import json
+import aiofiles
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
@@ -139,12 +140,13 @@ class DiarizationService:
         meeting_id: str,
         storage_path: str = "./data/recordings",
         provider: str = None,
+        audio_data: bytes = None,
     ) -> DiarizationResult:
         """
         Run speaker diarization on a meeting's recorded audio.
 
         This is the main entry point for diarization. It:
-        1. Merges audio chunks
+        1. Merges audio chunks (or uses provided audio_data)
         2. Sends to cloud API
         3. Processes results
         4. Returns speaker segments
@@ -153,6 +155,7 @@ class DiarizationService:
             meeting_id: Meeting ID to diarize
             storage_path: Base path for recordings
             provider: Override default provider
+            audio_data: Optional pre-loaded audio bytes (PCM or WAV)
 
         Returns:
             DiarizationResult with speaker segments
@@ -188,8 +191,26 @@ class DiarizationService:
                 f"🎯 Starting diarization for meeting {meeting_id} with {provider}"
             )
 
-            # Step 1: Merge audio chunks
-            audio_data = await AudioRecorder.merge_chunks(meeting_id, storage_path)
+            # Step 1: Get Audio Data
+            if audio_data is None:
+                # Try to find existing merged files first (Imported)
+                recording_dir = Path(storage_path) / meeting_id
+                merged_pcm = recording_dir / "merged_recording.pcm"
+                merged_wav = recording_dir / "merged_recording.wav"
+
+                if merged_pcm.exists():
+                    logger.info(f"📂 Found existing merged PCM file for {meeting_id}")
+                    async with aiofiles.open(merged_pcm, "rb") as f:
+                        audio_data = await f.read()
+                elif merged_wav.exists():
+                    logger.info(f"📂 Found existing merged WAV file for {meeting_id}")
+                    async with aiofiles.open(merged_wav, "rb") as f:
+                        audio_data = await f.read()
+                else:
+                    # Fallback to merging chunks
+                    audio_data = await AudioRecorder.merge_chunks(
+                        meeting_id, storage_path
+                    )
 
             if not audio_data:
                 return DiarizationResult(
@@ -203,21 +224,31 @@ class DiarizationService:
                 )
 
             # Step 2: Convert to WAV and SAVE for quality auditing
-            wav_data = AudioRecorder.convert_pcm_to_wav(audio_data)
-            audio_duration_seconds = len(audio_data) / (16000 * 2)
+            # Check if it's already WAV (RIFF header)
+            is_wav = audio_data.startswith(b"RIFF")
 
-            # Persist WAV to disk so user can listen to it
+            if is_wav:
+                wav_data = audio_data
+                logger.info("📦 Audio is already WAV format")
+            else:
+                wav_data = AudioRecorder.convert_pcm_to_wav(audio_data)
+                logger.info("📦 Converted PCM to WAV")
+
+            audio_duration_seconds = len(wav_data) / (
+                16000 * 2
+            )  # Approx if PCM, not accurate for WAV header but ok for log
+
+            # Persist WAV to disk so user can listen to it (if not already there)
             try:
                 wav_path = Path(storage_path) / meeting_id / "merged_recording.wav"
-                with open(wav_path, "wb") as f:
-                    f.write(wav_data)
-                logger.info(f"💾 Saved merged WAV for auditing: {wav_path}")
+                if not wav_path.exists():
+                    with open(wav_path, "wb") as f:
+                        f.write(wav_data)
+                    logger.info(f"💾 Saved merged WAV for auditing: {wav_path}")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to save WAV file (non-critical): {e}")
 
-            logger.info(
-                f"📦 Audio prepared: {audio_duration_seconds:.1f}s, {len(wav_data)} bytes"
-            )
+            logger.info(f"📦 Audio prepared: {len(wav_data)} bytes")
 
             # Step 3: Send to diarization API
             if provider == "deepgram":

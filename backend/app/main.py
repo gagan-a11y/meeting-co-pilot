@@ -2802,7 +2802,6 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
                         """,
                             meeting_id,
                             speaker_label,
-                            speaker_label,
                         )
 
                     # --- SAVE DIARIZED VERSION ---

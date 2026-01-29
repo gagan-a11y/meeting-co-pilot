@@ -29,20 +29,20 @@ class AudioRecorder:
     """
     Records audio chunks in parallel to live transcription.
     Non-blocking, async, fault-tolerant.
-    
+
     Audio is stored as raw PCM (16kHz, mono, 16-bit) chunks that can be
     merged and processed later for speaker diarization.
     """
-    
+
     def __init__(
-        self, 
-        meeting_id: str, 
+        self,
+        meeting_id: str,
         storage_path: str = "./data/recordings",
-        chunk_duration_seconds: float = 30.0
+        chunk_duration_seconds: float = 30.0,
     ):
         """
         Initialize the audio recorder.
-        
+
         Args:
             meeting_id: Unique identifier for the meeting
             storage_path: Base path for storing recordings
@@ -51,74 +51,76 @@ class AudioRecorder:
         self.meeting_id = meeting_id
         self.storage_path = Path(storage_path) / meeting_id
         self.chunk_duration_seconds = chunk_duration_seconds
-        
+
         # Recording state
         self.is_recording = False
         self.chunk_index = 0
         self.recording_start_time: Optional[float] = None
         self.chunk_start_time: Optional[float] = None
-        
+
         # Audio buffer for current chunk
         self.current_chunk_buffer = bytearray()
-        
+
         # PCM audio parameters
         self.sample_rate = 16000  # 16kHz
         self.bytes_per_sample = 2  # 16-bit
         self.channels = 1  # Mono
-        
+
         # Calculate target chunk size in bytes
         self.target_chunk_bytes = int(
-            self.chunk_duration_seconds * 
-            self.sample_rate * 
-            self.bytes_per_sample * 
-            self.channels
+            self.chunk_duration_seconds
+            * self.sample_rate
+            * self.bytes_per_sample
+            * self.channels
         )
-        
+
         # Chunk metadata for reconstruction
         self.chunks_metadata: List[Dict] = []
-        
+
         # NEW: Lock to serialize background saves and prevent race conditions
         self._lock = asyncio.Lock()
-        
+
         # Feature flag check
         self.enabled = os.getenv("ENABLE_AUDIO_RECORDING", "true").lower() == "true"
-        
-        logger.info(f"AudioRecorder initialized for meeting {meeting_id} (enabled={self.enabled})")
-    
+
+        logger.info(
+            f"AudioRecorder initialized for meeting {meeting_id} (enabled={self.enabled})"
+        )
+
     async def start(self) -> bool:
         """
         Initialize recording session.
         Creates storage directory and prepares for recording.
-        
+
         Returns:
             bool: True if started successfully
         """
         if not self.enabled:
             logger.info(f"Audio recording disabled for meeting {self.meeting_id}")
             return False
-            
+
         try:
             # Create storage directory
             self.storage_path.mkdir(parents=True, exist_ok=True)
-            
+
             self.is_recording = True
             self.recording_start_time = time.time()
             self.chunk_start_time = self.recording_start_time
             self.chunk_index = 0
             self.current_chunk_buffer = bytearray()
             self.chunks_metadata = []
-            
+
             logger.info(f"🎙️ Audio recording started for meeting {self.meeting_id}")
             logger.info(f"   Storage path: {self.storage_path}")
             logger.info(f"   Chunk duration: {self.chunk_duration_seconds}s")
-            
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to start audio recording: {e}")
             self.is_recording = False
             return False
-    
+
     async def add_chunk(self, audio_data: bytes) -> Optional[str]:
         """
         Add audio data to the recording buffer.
@@ -126,46 +128,50 @@ class AudioRecorder:
         """
         if not self.is_recording or not self.enabled:
             return None
-            
+
         try:
             # Synchronous extension: no await here ensures no race during addition
             self.current_chunk_buffer.extend(audio_data)
-            
+
             # Check if we should save the chunk
             if len(self.current_chunk_buffer) >= self.target_chunk_bytes:
                 # IMPORTANT: Swap buffer immediately to prevent data loss during 'await'
                 data_to_save = bytes(self.current_chunk_buffer)
                 self.current_chunk_buffer = bytearray()
-                
+
                 # Update chunk start time for calculations before background save
                 current_time = time.time()
                 old_chunk_start = self.chunk_start_time
                 self.chunk_start_time = current_time
-                
-                return await self._actually_save_chunk(data_to_save, old_chunk_start, current_time)
-                
+
+                return await self._actually_save_chunk(
+                    data_to_save, old_chunk_start, current_time
+                )
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error adding audio chunk: {e}")
             return None
-    
-    async def _actually_save_chunk(self, data: bytes, chunk_start: float, chunk_end: float) -> Optional[str]:
+
+    async def _actually_save_chunk(
+        self, data: bytes, chunk_start: float, chunk_end: float
+    ) -> Optional[str]:
         """Internal method to perform the actual file I/O safely"""
         async with self._lock:  # NEW: Serialize all saves to disk
             try:
                 chunk_filename = f"chunk_{self.chunk_index:05d}.pcm"
                 chunk_path = self.storage_path / chunk_filename
-                
+
                 # Calculate timing relative to meeting start
                 start_offset = chunk_start - self.recording_start_time
                 end_offset = chunk_end - self.recording_start_time
                 duration = len(data) / (self.sample_rate * self.bytes_per_sample)
-                
+
                 # Save audio data asynchronously
-                async with aiofiles.open(chunk_path, 'wb') as f:
+                async with aiofiles.open(chunk_path, "wb") as f:
                     await f.write(data)
-                
+
                 # Record metadata
                 metadata = {
                     "chunk_index": self.chunk_index,
@@ -174,14 +180,16 @@ class AudioRecorder:
                     "end_time_seconds": end_offset,
                     "duration_seconds": duration,
                     "size_bytes": len(data),
-                    "created_at": datetime.utcnow().isoformat()
+                    "created_at": datetime.utcnow().isoformat(),
                 }
                 self.chunks_metadata.append(metadata)
-                
-                logger.info(f"💾 Saved audio chunk {self.chunk_index} ({duration:.1f}s)")
+
+                logger.info(
+                    f"💾 Saved audio chunk {self.chunk_index} ({duration:.1f}s)"
+                )
                 self.chunk_index += 1
                 return str(chunk_path)
-                
+
             except Exception as e:
                 logger.error(f"Failed to save audio chunk: {e}")
                 return None
@@ -193,165 +201,191 @@ class AudioRecorder:
         data = bytes(self.current_chunk_buffer)
         self.current_chunk_buffer = bytearray()
         return await self._actually_save_chunk(data, self.chunk_start_time, time.time())
-    
+
     async def stop(self) -> Dict:
         """
         Finalize recording session.
         Saves any remaining audio and returns metadata.
-        
+
         Returns:
             Dict containing recording metadata
         """
         if not self.is_recording:
             return {"status": "not_recording"}
-            
+
         try:
             self.is_recording = False
-            
+
             # Save any remaining audio in buffer
             if self.current_chunk_buffer:
                 await self._save_current_chunk()
-            
+
             # Save metadata file
             metadata_path = self.storage_path / "metadata.json"
-            
+
             recording_metadata = {
                 "meeting_id": self.meeting_id,
-                "recording_start": datetime.fromtimestamp(self.recording_start_time).isoformat() if self.recording_start_time else None,
+                "recording_start": datetime.fromtimestamp(
+                    self.recording_start_time
+                ).isoformat()
+                if self.recording_start_time
+                else None,
                 "recording_end": datetime.utcnow().isoformat(),
-                "total_duration_seconds": time.time() - self.recording_start_time if self.recording_start_time else 0,
+                "total_duration_seconds": time.time() - self.recording_start_time
+                if self.recording_start_time
+                else 0,
                 "chunk_count": len(self.chunks_metadata),
                 "storage_path": str(self.storage_path),
                 "audio_format": {
                     "sample_rate": self.sample_rate,
                     "channels": self.channels,
                     "bits_per_sample": self.bytes_per_sample * 8,
-                    "format": "PCM"
+                    "format": "PCM",
                 },
-                "chunks": self.chunks_metadata
+                "chunks": self.chunks_metadata,
             }
-            
+
             import json
-            async with aiofiles.open(metadata_path, 'w') as f:
+
+            async with aiofiles.open(metadata_path, "w") as f:
                 await f.write(json.dumps(recording_metadata, indent=2))
-            
+
             logger.info(
                 f"🎙️ Audio recording stopped for meeting {self.meeting_id}: "
                 f"{len(self.chunks_metadata)} chunks, "
                 f"{recording_metadata['total_duration_seconds']:.1f}s total"
             )
-            
+
             return recording_metadata
-            
+
         except Exception as e:
             logger.error(f"Error stopping audio recording: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "meeting_id": self.meeting_id
-            }
-    
+            return {"status": "error", "error": str(e), "meeting_id": self.meeting_id}
+
     @staticmethod
-    async def merge_chunks(meeting_id: str, storage_path: str = "./data/recordings") -> Optional[bytes]:
+    async def merge_chunks(
+        meeting_id: str, storage_path: str = "./data/recordings"
+    ) -> Optional[bytes]:
         """
         Merge all audio chunks for a meeting into a single audio buffer.
-        
+        If chunks are missing but a merged file exists, returns that.
+
         Args:
             meeting_id: Meeting ID to merge chunks for
             storage_path: Base path for recordings
-            
+
         Returns:
             Optional[bytes]: Merged audio data or None if failed
         """
         try:
             chunk_dir = Path(storage_path) / meeting_id
-            
+
             if not chunk_dir.exists():
                 logger.error(f"Recording directory not found: {chunk_dir}")
                 return None
-            
+
+            # Check for existing merged files first
+            merged_pcm = chunk_dir / "merged_recording.pcm"
+            if merged_pcm.exists():
+                logger.info(f"Found existing merged PCM file: {merged_pcm}")
+                async with aiofiles.open(merged_pcm, "rb") as f:
+                    return await f.read()
+
+            merged_wav = chunk_dir / "merged_recording.wav"
+            if merged_wav.exists():
+                logger.info(f"Found existing merged WAV file: {merged_wav}")
+                async with aiofiles.open(merged_wav, "rb") as f:
+                    return await f.read()
+
             # Sort chunks by filename (ensures correct order)
             chunks = sorted(chunk_dir.glob("chunk_*.pcm"))
-            
+
             if not chunks:
                 logger.error(f"No audio chunks found in {chunk_dir}")
                 return None
-            
+
             # Merge all chunks
             merged_audio = bytearray()
             for chunk_path in chunks:
-                async with aiofiles.open(chunk_path, 'rb') as f:
+                async with aiofiles.open(chunk_path, "rb") as f:
                     chunk_data = await f.read()
                     merged_audio.extend(chunk_data)
-            
+
             logger.info(
                 f"Merged {len(chunks)} chunks "
                 f"({len(merged_audio) / (16000 * 2):.1f}s of audio)"
             )
-            
+
             return bytes(merged_audio)
-            
+
         except Exception as e:
             logger.error(f"Failed to merge audio chunks: {e}")
             return None
-    
+
     @staticmethod
     def convert_pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
         """
         Convert raw PCM data to WAV format.
-        
+
         Args:
             pcm_data: Raw PCM audio bytes
             sample_rate: Sample rate (default 16kHz)
-            
+
         Returns:
             bytes: WAV file data
         """
         import io
         import wave
-        
+
         wav_buffer = io.BytesIO()
-        
-        with wave.open(wav_buffer, 'wb') as wav_file:
+
+        with wave.open(wav_buffer, "wb") as wav_file:
             wav_file.setnchannels(1)  # Mono
             wav_file.setsampwidth(2)  # 16-bit
             wav_file.setframerate(sample_rate)
             wav_file.writeframes(pcm_data)
-        
+
         return wav_buffer.getvalue()
-    
+
     async def get_status(self) -> Dict:
         """Get current recording status."""
         if not self.is_recording:
             return {
                 "status": "stopped",
                 "meeting_id": self.meeting_id,
-                "chunks_saved": len(self.chunks_metadata)
+                "chunks_saved": len(self.chunks_metadata),
             }
-        
-        current_duration = time.time() - self.recording_start_time if self.recording_start_time else 0
-        buffer_duration = len(self.current_chunk_buffer) / (self.sample_rate * self.bytes_per_sample)
-        
+
+        current_duration = (
+            time.time() - self.recording_start_time if self.recording_start_time else 0
+        )
+        buffer_duration = len(self.current_chunk_buffer) / (
+            self.sample_rate * self.bytes_per_sample
+        )
+
         return {
             "status": "recording",
             "meeting_id": self.meeting_id,
             "duration_seconds": current_duration,
             "chunks_saved": len(self.chunks_metadata),
-            "buffer_duration": buffer_duration
+            "buffer_duration": buffer_duration,
         }
 
     @staticmethod
-    async def rename_recorder_folder(old_id: str, new_id: str, storage_path: str = "./data/recordings") -> bool:
+    async def rename_recorder_folder(
+        old_id: str, new_id: str, storage_path: str = "./data/recordings"
+    ) -> bool:
         """
         Rename a recording directory (e.g. from session_id to meeting_id).
         """
         import shutil
+
         old_dir = Path(storage_path) / old_id
         new_dir = Path(storage_path) / new_id
-        
+
         if not old_dir.exists():
             return False
-            
+
         try:
             # If new_dir already exists (unlikely but possible), merge contents
             if new_dir.exists():
@@ -360,7 +394,7 @@ class AudioRecorder:
                 old_dir.rmdir()
             else:
                 os.rename(str(old_dir), str(new_dir))
-            
+
             logger.info(f"📁 Linked audio recording: {old_id} -> {new_id}")
             return True
         except Exception as e:
@@ -373,16 +407,15 @@ active_recorders: Dict[str, AudioRecorder] = {}
 
 
 async def get_or_create_recorder(
-    meeting_id: str, 
-    storage_path: str = "./data/recordings"
+    meeting_id: str, storage_path: str = "./data/recordings"
 ) -> AudioRecorder:
     """
     Get existing recorder or create new one for a meeting.
-    
+
     Args:
         meeting_id: Meeting ID
         storage_path: Base storage path
-        
+
     Returns:
         AudioRecorder instance
     """
@@ -390,17 +423,17 @@ async def get_or_create_recorder(
         recorder = AudioRecorder(meeting_id, storage_path)
         await recorder.start()
         active_recorders[meeting_id] = recorder
-    
+
     return active_recorders[meeting_id]
 
 
 async def stop_recorder(meeting_id: str) -> Optional[Dict]:
     """
     Stop and cleanup recorder for a meeting.
-    
+
     Args:
         meeting_id: Meeting ID
-        
+
     Returns:
         Recording metadata or None if no recorder found
     """
@@ -409,5 +442,5 @@ async def stop_recorder(meeting_id: str) -> Optional[Dict]:
         metadata = await recorder.stop()
         del active_recorders[meeting_id]
         return metadata
-    
+
     return None

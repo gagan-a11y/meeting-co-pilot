@@ -38,11 +38,15 @@ export async function authFetch(endpoint: string, options: RequestInit & { preve
     ? endpoint 
     : `${apiUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
-  const headers = {
-    'Content-Type': 'application/json',
+  const headers: Record<string, string> = {
     'Authorization': `Bearer ${session.idToken}`,
-    ...options.headers,
+    ...((options.headers as Record<string, string>) || {}),
   };
+
+  // Only set Content-Type to JSON if body is NOT FormData and Content-Type isn't already set
+  if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const response = await fetch(url, {
     ...options,

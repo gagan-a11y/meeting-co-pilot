@@ -5,6 +5,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
 class RBAC:
     def __init__(self, db: DatabaseManager):
         self.db = db
@@ -12,14 +13,14 @@ class RBAC:
     async def can(self, user: User, action: str, meeting_id: str) -> bool:
         """
         Central Policy Check: Can `user` perform `action` on `meeting_id`?
-        
+
         Actions: 'view', 'edit', 'delete', 'invite', 'ai_interact'
         """
         if not user or not user.email:
             return False
 
         # Allow AI interaction with the current recording (not yet saved in DB)
-        if meeting_id == 'current-recording' and action == 'ai_interact':
+        if meeting_id == "current-recording" and action == "ai_interact":
             return True
 
         # 1. Fetch meeting context (Owner, Workspace)
@@ -27,34 +28,36 @@ class RBAC:
         try:
             async with self.db._get_connection() as conn:
                 row = await conn.fetchrow(
-                    "SELECT owner_id, workspace_id FROM meetings WHERE id = $1", 
-                    meeting_id
+                    "SELECT owner_id, workspace_id FROM meetings WHERE id = $1",
+                    meeting_id,
                 )
                 if not row:
                     # FALLBACK: If meeting doesn't exist in DB yet, but we're doing ai_interact,
                     # it might be a newly created meeting that hasn't been saved yet.
                     # Or it's a transient state. For safety, we only allow this for 'ai_interact'.
-                    if action == 'ai_interact':
-                        logger.warning(f"RBAC: Meeting {meeting_id} not found in DB. Allowing ai_interact as fallback.")
+                    if action == "ai_interact":
+                        logger.warning(
+                            f"RBAC: Meeting {meeting_id} not found in DB. Allowing ai_interact as fallback."
+                        )
                         return True
-                    
+
                     logger.warning(f"RBAC: Meeting {meeting_id} not found")
                     return False
-                
-                owner_id, workspace_id = row['owner_id'], row['workspace_id']
-            
-            logger.info(f"RBAC Check: user={user.email}, action={action}, meeting={meeting_id}, owner={owner_id}")
-            
+
+                owner_id, workspace_id = row["owner_id"], row["workspace_id"]
+
+            logger.info(
+                f"RBAC Check: user={user.email}, action={action}, meeting={meeting_id}, owner={owner_id}"
+            )
+
             # 2. Check Ownership (ALLOW ALL)
             # LEGACY SUPPORT: If owner_id is None, allow access (for migration/corrupted records)
             if owner_id is None or owner_id == user.email or owner_id == "":
                 return True
         except Exception as e:
             logger.error(f"RBAC Error during lookup: {str(e)}")
-            # Fallback for transient errors: allow ai_interact if it's the current user
-            if action == 'ai_interact':
-                return True
-            return False
+            # Raise exception for system errors so API returns 500 instead of 403
+            raise e
 
         # 3. Check Workspace Admin (ALLOW ALL)
         if workspace_id:
@@ -62,9 +65,10 @@ class RBAC:
                 async with self.db._get_connection() as conn:
                     member_row = await conn.fetchrow(
                         "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
-                        workspace_id, user.email
+                        workspace_id,
+                        user.email,
                     )
-                    if member_row and member_row['role'] == 'admin':
+                    if member_row and member_row["role"] == "admin":
                         return True
             except Exception as e:
                 logger.error(f"RBAC Workspace check error: {str(e)}")
@@ -74,25 +78,26 @@ class RBAC:
             async with self.db._get_connection() as conn:
                 perm_row = await conn.fetchrow(
                     "SELECT role FROM meeting_permissions WHERE meeting_id = $1 AND user_id = $2",
-                    meeting_id, user.email
+                    meeting_id,
+                    user.email,
                 )
-            
+
             if not perm_row:
                 return False
-            
-            role = perm_row['role']
-            
+
+            role = perm_row["role"]
+
             # 5. Resolve based on Role & Action
             # viewer: view
             # participant: view, ai_interact, edit
-            
-            if role == 'viewer':
-                if action in ['view', 'export']:
+
+            if role == "viewer":
+                if action in ["view", "export"]:
                     return True
                 return False
-            
-            if role == 'participant':
-                if action in ['view', 'export', 'ai_interact', 'edit']:
+
+            if role == "participant":
+                if action in ["view", "export", "ai_interact", "edit"]:
                     return True
                 # Participants cannot delete or invite (unless logic changes)
                 return False
@@ -109,7 +114,7 @@ class RBAC:
         """
         # Complex query logic needed here or just filter in memory?
         # SQL filtering is better.
-        
+
         # Query:
         # 1. Owned meetings
         # 2. Workspace meetings where user is ADMIN
@@ -118,7 +123,7 @@ class RBAC:
         #    So Workspace Membership (Role=Member) gives NO default access.
         #    Workspace Admin gives ALL access.
         # 4. Explicitly invited meetings (Personal or Workspace) via meeting_permissions.
-        
+
         # Ensure clean query string
         query = """
             SELECT m.id 
@@ -132,11 +137,11 @@ class RBAC:
                 OR (mp.role IS NOT NULL)
         """
         # Note: If meeting has NO workspace_id (Personal), wm.role will be null.
-        
+
         accessible_ids = []
         async with self.db._get_connection() as conn:
             # Using fetch because we expect rows. execute returns a status string.
             rows = await conn.fetch(query, user.email, user.email, user.email)
-            accessible_ids = [r['id'] for r in rows]
-            
+            accessible_ids = [r["id"] for r in rows]
+
         return accessible_ids
