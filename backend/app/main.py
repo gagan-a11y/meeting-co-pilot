@@ -28,6 +28,7 @@ from threading import Lock
 from transcript_processor import TranscriptProcessor
 import time
 import uuid
+from pathlib import Path
 from datetime import datetime
 from fastapi import Depends, status
 from auth import get_current_user, User
