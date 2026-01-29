@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, LogOut } from 'lucide-react';
+import { ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, LogOut, Upload } from 'lucide-react';
 import { signOut } from 'next-auth/react';
 import { authFetch } from '@/lib/api';
 import { useRouter, usePathname } from 'next/navigation';
@@ -25,6 +25,7 @@ import {
 import { VisuallyHidden } from "@/components/ui/visually-hidden"
 
 import { MessageToast } from '../MessageToast';
+import { ImportModal } from '@/components/ImportModal';
 import Logo from '../Logo';
 import Info from '../Info';
 import { ComplianceNotification } from '../ComplianceNotification';
@@ -97,6 +98,7 @@ const Sidebar: React.FC = () => {
 
 
   const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; itemId: string | null }>({ isOpen: false, itemId: null });
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   useEffect(() => {
     // Note: Don't set hardcoded defaults - let DB be the source of truth
@@ -761,6 +763,14 @@ const Sidebar: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="w-full flex items-center justify-center px-3 py-1.5 mt-1 mb-1 text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors shadow-sm"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              <span>Import</span>
+            </button>
+
+            <button
               onClick={() => router.push('/settings')}
               className="w-full flex items-center justify-center px-3 py-1.5 mt-1 mb-1 text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors shadow-sm"
             >
@@ -788,6 +798,11 @@ const Sidebar: React.FC = () => {
         text="Are you sure you want to delete this meeting? This action cannot be undone."
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteModalState({ isOpen: false, itemId: null })}
+      />
+
+      <ImportModal 
+        isOpen={isImportModalOpen} 
+        onClose={() => setIsImportModalOpen(false)} 
       />
 
       {/* Edit Meeting Title Modal */}

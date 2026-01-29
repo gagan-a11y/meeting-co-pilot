@@ -4,6 +4,9 @@ from fastapi import (
     BackgroundTasks,
     WebSocket,
     WebSocketDisconnect,
+    UploadFile,
+    File,
+    Form,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -38,6 +41,7 @@ from audio_recorder import (
     active_recorders,
 )
 from diarization import DiarizationService, get_diarization_service, DiarizationResult
+from file_processing import get_file_processor
 
 # Configure logger with line numbers and function names
 logger = logging.getLogger(__name__)
@@ -2444,6 +2448,62 @@ async def reindex_all():
 
 
 # ============================================
+
+
+@app.post("/upload-meeting-recording")
+async def upload_meeting_recording(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upload and process an audio/video file as a new meeting.
+    """
+    meeting_id = str(uuid.uuid4())
+    meeting_title = title or file.filename or "Untitled Import"
+
+    # 1. Create meeting entry in DB
+    # We use the global db instance
+    await db.save_meeting(
+        meeting_id=meeting_id,
+        title=meeting_title,
+        owner_id=current_user.id if current_user else "default",
+        workspace_id=current_user.workspace_id if current_user else "default",
+    )
+
+    # 2. Save file temporarily
+    # Need to handle filename carefully
+    original_filename = file.filename or "uploaded_file"
+    file_ext = os.path.splitext(original_filename)[1]
+    if not file_ext:
+        file_ext = ".bin"  # Fallback
+
+    upload_dir = Path("./data/uploads") / meeting_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file_path = upload_dir / f"original{file_ext}"
+
+    try:
+        async with aiofiles.open(file_path, "wb") as out_file:
+            while content := await file.read(1024 * 1024):  # 1MB chunks
+                await out_file.write(content)
+    except Exception as e:
+        logger.error(f"Failed to save uploaded file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+
+    # 3. Trigger processing
+    processor = get_file_processor(db)
+    background_tasks.add_task(
+        processor.process_file, meeting_id, file_path, meeting_title
+    )
+
+    return {
+        "meeting_id": meeting_id,
+        "status": "processing",
+        "message": "File uploaded and processing started",
+    }
+
+
 # Diarization Endpoints
 # ============================================
 
