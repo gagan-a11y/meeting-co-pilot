@@ -38,8 +38,7 @@ export default function PageContent({
   console.log('📄 PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
     summaryDataKeys: summaryData ? Object.keys(summaryData) : null,
-    transcriptsCount: meeting.transcripts?.length,
-    firstTranscript: meeting.transcripts?.[0]
+    transcriptsCount: meeting.transcripts?.length
   });
 
   // State
@@ -186,8 +185,6 @@ export default function PageContent({
           diarizationStatus={diarization.status?.status}
           isDiarizing={diarization.isDiarizing}
           speakerMap={speakerMap}
-          meetingId={meeting.id}
-          onTranscriptsUpdate={meetingData.setTranscripts}
         />
 
         <SummaryPanel

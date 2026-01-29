@@ -37,7 +37,10 @@ export function useCopyOperations({
     const header = `# Transcript of the Meeting: ${meeting.id} - ${meetingTitle ?? meeting.title}\n\n`;
     const date = `## Date: ${new Date(meeting.created_at).toLocaleDateString()}\n\n`;
     const fullTranscript = transcripts
-      .map(t => `${formatTime(t.audio_start_time, t.timestamp)} ${t.text}`)
+      .map(t => {
+        const speakerLabel = `**${t.speaker || "Speaker 0"}:** `;
+        return `${speakerLabel}${formatTime(t.audio_start_time, t.timestamp)} ${t.text}`;
+      })
       .join('\n');
 
     await navigator.clipboard.writeText(header + date + fullTranscript);

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Transcript, Summary } from '@/types';
 import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummaryView';
 import { CurrentMeeting, useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -14,7 +14,6 @@ interface UseMeetingDataProps {
 
 export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMeetingDataProps) {
   // State
-  const [transcripts] = useState<Transcript[]>(meeting.transcripts);
   const [meetingTitle, setMeetingTitle] = useState(meeting.title || '+ New Call');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isTitleDirty, setIsTitleDirty] = useState(false);
@@ -22,6 +21,21 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   const [isSaving, setIsSaving] = useState(false);
   const [, setIsSummaryDirty] = useState(false);
   const [, setError] = useState<string>('');
+
+  // Sync state with props when meeting data is refetched (e.g. after diarization)
+  const [transcripts, setTranscripts] = useState<Transcript[]>(meeting.transcripts);
+  
+  useEffect(() => {
+    if (meeting.transcripts) {
+      setTranscripts(meeting.transcripts);
+    }
+    if (summaryData) {
+      setAiSummary(summaryData);
+    }
+    if (meeting.title) {
+      setMeetingTitle(meeting.title);
+    }
+  }, [meeting.transcripts, meeting.title, summaryData]);
 
   // Ref for BlockNoteSummaryView
   const blockNoteSummaryRef = useRef<BlockNoteSummaryViewRef>(null);
@@ -169,6 +183,7 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     setIsEditingTitle,
     setAiSummary,
     setIsSummaryDirty,
+    setTranscripts, // Expose this
 
     // Handlers
     handleTitleChange,

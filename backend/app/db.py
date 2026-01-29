@@ -2,7 +2,7 @@ import asyncpg
 import json
 import os
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import logging
 from contextlib import asynccontextmanager
 
@@ -13,15 +13,19 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
 class DatabaseManager:
     def __init__(self, db_url: str = None):
         if db_url is None:
-            # Default to the provided Neon URL if not in env, but env is preferred
-            default_url = "postgresql://neondb_owner:npg_3JYK7ySezjrT@ep-morning-truth-ahrz730e-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require"
-            self.db_url = os.getenv('DATABASE_URL', default_url)
+            # SECURITY: Rely only on environment variable
+            self.db_url = os.getenv("DATABASE_URL") or os.getenv("NEON_DATABASE_URL")
+            if not self.db_url:
+                raise ValueError(
+                    "DATABASE_URL or NEON_DATABASE_URL environment variable is not set"
+                )
         else:
             self.db_url = db_url
-            
+
         # No more local init_db or schema validation on app startup
         # We assume the migration script has run or the DB is provisioned
 
@@ -29,7 +33,7 @@ class DatabaseManager:
     async def _get_connection(self):
         """Get a new database connection from the pool"""
         # In a real prod app, you'd want a global pool created on startup
-        # For now, creating a connection per request is okay for low traffic, 
+        # For now, creating a connection per request is okay for low traffic,
         # but we should move to a pool pattern in main.py startup event later.
         conn = await asyncpg.connect(self.db_url)
         try:
@@ -39,8 +43,8 @@ class DatabaseManager:
 
     async def create_process(self, meeting_id: str) -> str:
         """Create a new process entry or update existing one and return its ID"""
-        now = datetime.utcnow() # Postgres expects datetime object, not string
-        
+        now = datetime.utcnow()  # Postgres expects datetime object, not string
+
         try:
             async with self._get_connection() as conn:
                 async with conn.transaction():
@@ -52,9 +56,12 @@ class DatabaseManager:
                         SET status = $1, updated_at = $2, start_time = $3, error = NULL, result = NULL
                         WHERE meeting_id = $4
                         """,
-                        "PENDING", now, now, meeting_id
+                        "PENDING",
+                        now,
+                        now,
+                        meeting_id,
                     )
-                    
+
                     # Check if update happened (asyncpg returns "UPDATE N")
                     if result == "UPDATE 0":
                         await conn.execute(
@@ -62,90 +69,123 @@ class DatabaseManager:
                             INSERT INTO summary_processes (meeting_id, status, created_at, updated_at, start_time) 
                             VALUES ($1, $2, $3, $4, $5)
                             """,
-                            meeting_id, "PENDING", now, now, now
+                            meeting_id,
+                            "PENDING",
+                            now,
+                            now,
+                            now,
                         )
-                    
-                    logger.info(f"Successfully created/updated process for meeting_id: {meeting_id}")
-                    
+
+                    logger.info(
+                        f"Successfully created/updated process for meeting_id: {meeting_id}"
+                    )
+
         except Exception as e:
-            logger.error(f"Database connection error in create_process: {str(e)}", exc_info=True)
+            logger.error(
+                f"Database connection error in create_process: {str(e)}", exc_info=True
+            )
             raise
-        
+
         return meeting_id
 
-    async def update_process(self, meeting_id: str, status: str, result: Optional[Dict] = None, error: Optional[str] = None, 
-                           chunk_count: Optional[int] = None, processing_time: Optional[float] = None, 
-                           metadata: Optional[Dict] = None):
+    async def update_process(
+        self,
+        meeting_id: str,
+        status: str,
+        result: Optional[Dict] = None,
+        error: Optional[str] = None,
+        chunk_count: Optional[int] = None,
+        processing_time: Optional[float] = None,
+        metadata: Optional[Dict] = None,
+    ):
         """Update a process status and result"""
         now = datetime.utcnow()
-        
+
         try:
             async with self._get_connection() as conn:
                 async with conn.transaction():
                     update_fields = ["status = $1", "updated_at = $2"]
                     params = [status, now]
-                    param_idx = 3 # Start at $3
-                    
+                    param_idx = 3  # Start at $3
+
                     if result:
                         # Postgres JSONB handles dicts natively with asyncpg
                         update_fields.append(f"result = ${param_idx}")
-                        params.append(json.dumps(result)) # Store as JSON string for JSONB
+                        params.append(
+                            json.dumps(result)
+                        )  # Store as JSON string for JSONB
                         param_idx += 1
-                            
+
                     if error:
-                        sanitized_error = str(error).replace('\n', ' ').replace('\r', '')[:1000]
+                        sanitized_error = (
+                            str(error).replace("\n", " ").replace("\r", "")[:1000]
+                        )
                         update_fields.append(f"error = ${param_idx}")
                         params.append(sanitized_error)
                         param_idx += 1
-                        
+
                     if chunk_count is not None:
                         update_fields.append(f"chunk_count = ${param_idx}")
                         params.append(chunk_count)
                         param_idx += 1
-                        
+
                     if processing_time is not None:
                         update_fields.append(f"processing_time = ${param_idx}")
                         params.append(processing_time)
                         param_idx += 1
-                        
+
                     if metadata:
                         update_fields.append(f"metadata = ${param_idx}")
                         params.append(json.dumps(metadata))
                         param_idx += 1
-                            
-                    if status.upper() in ['COMPLETED', 'FAILED']:
+
+                    if status.upper() in ["COMPLETED", "FAILED"]:
                         update_fields.append(f"end_time = ${param_idx}")
                         params.append(now)
                         param_idx += 1
-                        
+
                     params.append(meeting_id)
                     query = f"UPDATE summary_processes SET {', '.join(update_fields)} WHERE meeting_id = ${param_idx}"
-                    
+
                     res = await conn.execute(query, *params)
                     if res == "UPDATE 0":
-                        logger.warning(f"No process found to update for meeting_id: {meeting_id}")
-                        
-                    logger.debug(f"Successfully updated process status to {status} for meeting_id: {meeting_id}")
-                    
+                        logger.warning(
+                            f"No process found to update for meeting_id: {meeting_id}"
+                        )
+
+                    logger.debug(
+                        f"Successfully updated process status to {status} for meeting_id: {meeting_id}"
+                    )
+
         except Exception as e:
-            logger.error(f"Database connection error in update_process: {str(e)}", exc_info=True)
+            logger.error(
+                f"Database connection error in update_process: {str(e)}", exc_info=True
+            )
             raise
 
-    async def save_transcript(self, meeting_id: str, transcript_text: str, model: str, model_name: str, 
-                            chunk_size: int, overlap: int):
+    async def save_transcript(
+        self,
+        meeting_id: str,
+        transcript_text: str,
+        model: str,
+        model_name: str,
+        chunk_size: int,
+        overlap: int,
+    ):
         """Save transcript data"""
         if not meeting_id or not meeting_id.strip():
             raise ValueError("meeting_id cannot be empty")
         if not transcript_text or not transcript_text.strip():
             raise ValueError("transcript_text cannot be empty")
-            
+
         now = datetime.utcnow()
-        
+
         try:
             async with self._get_connection() as conn:
                 async with conn.transaction():
                     # Postgres upsert using ON CONFLICT
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         INSERT INTO full_transcripts (meeting_id, transcript_text, model, model_name, chunk_size, overlap, created_at)
                         VALUES ($1, $2, $3, $4, $5, $6, $7)
                         ON CONFLICT (meeting_id) 
@@ -156,12 +196,24 @@ class DatabaseManager:
                             chunk_size = EXCLUDED.chunk_size,
                             overlap = EXCLUDED.overlap,
                             created_at = EXCLUDED.created_at
-                    """, meeting_id, transcript_text, model, model_name, chunk_size, overlap, now)
-                    
-                    logger.info(f"Successfully saved transcript for meeting_id: {meeting_id} (size: {len(transcript_text)} chars)")
-                    
+                    """,
+                        meeting_id,
+                        transcript_text,
+                        model,
+                        model_name,
+                        chunk_size,
+                        overlap,
+                        now,
+                    )
+
+                    logger.info(
+                        f"Successfully saved transcript for meeting_id: {meeting_id} (size: {len(transcript_text)} chars)"
+                    )
+
         except Exception as e:
-            logger.error(f"Database connection error in save_transcript: {str(e)}", exc_info=True)
+            logger.error(
+                f"Database connection error in save_transcript: {str(e)}", exc_info=True
+            )
             raise
 
     async def update_meeting_name(self, meeting_id: str, meeting_name: str):
@@ -169,54 +221,87 @@ class DatabaseManager:
         now = datetime.utcnow()
         async with self._get_connection() as conn:
             async with conn.transaction():
-                await conn.execute("""
+                await conn.execute(
+                    """
                     UPDATE meetings
                     SET title = $1, updated_at = $2
                     WHERE id = $3
-                """, meeting_name, now, meeting_id)
-                
-                await conn.execute("""
+                """,
+                    meeting_name,
+                    now,
+                    meeting_id,
+                )
+
+                await conn.execute(
+                    """
                     UPDATE full_transcripts
                     SET meeting_name = $1
                     WHERE meeting_id = $2
-                """, meeting_name, meeting_id)
+                """,
+                    meeting_name,
+                    meeting_id,
+                )
 
     async def get_transcript_data(self, meeting_id: str):
         """Get transcript/summary process data for a meeting"""
         async with self._get_connection() as conn:
-            row = await conn.fetchrow("""
+            row = await conn.fetchrow(
+                """
                 SELECT meeting_id, status, result, error, start_time, end_time
                 FROM summary_processes 
                 WHERE meeting_id = $1
                 ORDER BY start_time DESC
                 LIMIT 1
-            """, meeting_id)
-            
+            """,
+                meeting_id,
+            )
+
             if row:
                 # Convert Record to dict
                 data = dict(row)
                 # Handle JSONB fields if they are strings (asyncpg might return dict directly if jsonb)
-                if isinstance(data.get('result'), str):
+                if isinstance(data.get("result"), str):
                     try:
-                        data['result'] = json.loads(data['result'])
-                    except: pass
+                        data["result"] = json.loads(data["result"])
+                    except:
+                        pass
                 return data
             return None
 
-    async def save_meeting(self, meeting_id: str, title: str, folder_path: str = None, owner_id: str = None, workspace_id: str = None):
+    async def save_meeting(
+        self,
+        meeting_id: str,
+        title: str,
+        folder_path: str = None,
+        owner_id: str = None,
+        workspace_id: str = None,
+    ):
         """Save or update a meeting"""
         try:
             async with self._get_connection() as conn:
                 # Check existence
-                exists = await conn.fetchval("SELECT id FROM meetings WHERE id = $1", meeting_id)
+                exists = await conn.fetchval(
+                    "SELECT id FROM meetings WHERE id = $1", meeting_id
+                )
 
                 if not exists:
                     now = datetime.utcnow()
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         INSERT INTO meetings (id, title, created_at, updated_at, folder_path, owner_id, workspace_id)
                         VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """, meeting_id, title, now, now, folder_path, owner_id, workspace_id)
-                    logger.info(f"Saved meeting {meeting_id} (Owner: {owner_id}, WS: {workspace_id})")
+                    """,
+                        meeting_id,
+                        title,
+                        now,
+                        now,
+                        folder_path,
+                        owner_id,
+                        workspace_id,
+                    )
+                    logger.info(
+                        f"Saved meeting {meeting_id} (Owner: {owner_id}, WS: {workspace_id})"
+                    )
                 else:
                     # Optional: We could update title here if we wanted
                     pass
@@ -225,23 +310,230 @@ class DatabaseManager:
             logger.error(f"Error saving meeting: {str(e)}")
             raise
 
-    async def save_meeting_transcript(self, meeting_id: str, transcript: str, timestamp: str,
-                                     summary: str = "", action_items: str = "", key_points: str = "",
-                                     audio_start_time: float = None, audio_end_time: float = None, duration: float = None):
+    async def save_meeting_transcript(
+        self,
+        meeting_id: str,
+        transcript: str,
+        timestamp: str,
+        summary: str = "",
+        action_items: str = "",
+        key_points: str = "",
+        audio_start_time: float = None,
+        audio_end_time: float = None,
+        duration: float = None,
+        source: str = "live",
+    ):
         """Save a transcript for a meeting"""
         try:
             async with self._get_connection() as conn:
                 # No ON CONFLICT logic needed as transcripts table has SERIAL ID, duplicates allowed unless unique constraint
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO transcript_segments (
                         meeting_id, transcript, timestamp, summary, action_items, key_points,
-                        audio_start_time, audio_end_time, duration
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                """, meeting_id, transcript, timestamp, summary, action_items, key_points,
-                      audio_start_time, audio_end_time, duration)
+                        audio_start_time, audio_end_time, duration, source
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                """,
+                    meeting_id,
+                    transcript,
+                    timestamp,
+                    summary,
+                    action_items,
+                    key_points,
+                    audio_start_time,
+                    audio_end_time,
+                    duration,
+                    source,
+                )
                 return True
         except Exception as e:
             logger.error(f"Error saving transcript: {str(e)}")
+            raise
+
+    async def save_transcript_version(
+        self,
+        meeting_id: str,
+        source: str,
+        content: list,
+        is_authoritative: bool = False,
+        alignment_config: Optional[Dict] = None,
+        created_by: str = "system",
+    ) -> int:
+        """
+        Save a full transcript version snapshot with auto-incrementing version number.
+
+        Args:
+            meeting_id: Meeting ID
+            source: 'live' | 'diarized' | 'manual_edit'
+            content: Array of transcript segments
+            is_authoritative: If True, demotes previous authoritative version
+            alignment_config: Alignment algorithm settings used
+            created_by: 'system' or user email
+
+        Returns:
+            Version number (int)
+        """
+        try:
+            async with self._get_connection() as conn:
+                async with conn.transaction():
+                    # Get next version number
+                    version_num = await conn.fetchval(
+                        """
+                        SELECT COALESCE(MAX(version_num), 0) + 1
+                        FROM transcript_versions
+                        WHERE meeting_id = $1
+                    """,
+                        meeting_id,
+                    )
+
+                    # Calculate confidence metrics from content
+                    confidence_metrics = self._calculate_confidence_metrics(content)
+
+                    # If making this authoritative, demote previous
+                    if is_authoritative:
+                        await conn.execute(
+                            """
+                            UPDATE transcript_versions
+                            SET is_authoritative = FALSE
+                            WHERE meeting_id = $1 AND is_authoritative = TRUE
+                        """,
+                            meeting_id,
+                        )
+
+                    # Insert new version
+                    await conn.execute(
+                        """
+                        INSERT INTO transcript_versions (
+                            meeting_id, version_num, source, content_json,
+                            is_authoritative, created_by, alignment_config, confidence_metrics
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    """,
+                        meeting_id,
+                        version_num,
+                        source,
+                        json.dumps(content),
+                        is_authoritative,
+                        created_by,
+                        json.dumps(alignment_config or {}),
+                        json.dumps(confidence_metrics),
+                    )
+
+                    logger.info(
+                        f"Saved transcript version v{version_num} for {meeting_id} "
+                        f"(source={source}, auth={is_authoritative}, "
+                        f"avg_conf={confidence_metrics.get('avg_confidence', 0):.2f})"
+                    )
+                    return version_num
+        except Exception as e:
+            logger.error(f"Error saving transcript version: {str(e)}")
+            raise
+
+    def _calculate_confidence_metrics(self, segments: List[Dict]) -> Dict:
+        """Calculate confidence metrics from transcript segments."""
+        if not segments:
+            return {
+                "total_segments": 0,
+                "avg_confidence": 0.0,
+                "confident_count": 0,
+                "uncertain_count": 0,
+                "overlap_count": 0,
+            }
+
+        total_confidence = 0.0
+        confident_count = 0
+        uncertain_count = 0
+        overlap_count = 0
+
+        for seg in segments:
+            # Handle potential None values safely
+            speaker_conf = seg.get("speaker_confidence")
+            if speaker_conf is None:
+                speaker_conf = seg.get("confidence", 1.0)
+
+            # If still None (unlikely but possible if confidence key exists but is None), default to 1.0
+            if speaker_conf is None:
+                speaker_conf = 1.0
+
+            total_confidence += float(speaker_conf)
+
+            state = seg.get("alignment_state", "CONFIDENT")
+            if state == "CONFIDENT":
+                confident_count += 1
+            elif state == "UNCERTAIN":
+                uncertain_count += 1
+            elif state == "OVERLAP":
+                overlap_count += 1
+
+        return {
+            "total_segments": len(segments),
+            "avg_confidence": total_confidence / len(segments),
+            "confident_count": confident_count,
+            "uncertain_count": uncertain_count,
+            "overlap_count": overlap_count,
+        }
+
+    async def get_transcript_versions(self, meeting_id: str) -> List[Dict]:
+        """Get all versions for a meeting, ordered by version number."""
+        async with self._get_connection() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT version_num, source, is_authoritative, created_at,
+                       confidence_metrics, created_by
+                FROM transcript_versions
+                WHERE meeting_id = $1
+                ORDER BY version_num DESC
+            """,
+                meeting_id,
+            )
+
+            return [
+                {
+                    "version_num": row["version_num"],
+                    "source": row["source"],
+                    "is_authoritative": row["is_authoritative"],
+                    "created_at": row["created_at"].isoformat()
+                    if row["created_at"]
+                    else None,
+                    "confidence_metrics": json.loads(row["confidence_metrics"])
+                    if isinstance(row["confidence_metrics"], str)
+                    else row["confidence_metrics"],
+                    "created_by": row["created_by"],
+                }
+                for row in rows
+            ]
+
+    async def get_transcript_version_content(
+        self, meeting_id: str, version_num: int
+    ) -> Optional[List[Dict]]:
+        """Get the content of a specific transcript version."""
+        async with self._get_connection() as conn:
+            content_json = await conn.fetchval(
+                """
+                SELECT content_json
+                FROM transcript_versions
+                WHERE meeting_id = $1 AND version_num = $2
+            """,
+                meeting_id,
+                version_num,
+            )
+
+            if content_json:
+                if isinstance(content_json, str):
+                    return json.loads(content_json)
+                return content_json
+            return None
+
+    async def clear_meeting_transcripts(self, meeting_id: str):
+        """Delete all transcript segments for a meeting"""
+        try:
+            async with self._get_connection() as conn:
+                await conn.execute(
+                    "DELETE FROM transcript_segments WHERE meeting_id = $1", meeting_id
+                )
+                logger.info(f"Cleared transcripts for meeting {meeting_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error clearing transcripts: {str(e)}")
             raise
 
     async def get_meeting(self, meeting_id: str):
@@ -249,37 +541,55 @@ class DatabaseManager:
         try:
             async with self._get_connection() as conn:
                 # Get meeting details
-                meeting = await conn.fetchrow("""
+                meeting = await conn.fetchrow(
+                    """
                     SELECT id, title, created_at, updated_at, owner_id, workspace_id
                     FROM meetings
                     WHERE id = $1
-                """, meeting_id)
-                
+                """,
+                    meeting_id,
+                )
+
                 if not meeting:
                     return None
-                
+
                 # Get transcripts
-                transcripts = await conn.fetch("""
-                    SELECT transcript, timestamp, audio_start_time, audio_end_time, duration
+                transcripts = await conn.fetch(
+                    """
+                    SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker, speaker_confidence, source, alignment_state
                     FROM transcript_segments
                     WHERE meeting_id = $1
-                """, meeting_id)
+                    ORDER BY id ASC
+                """,
+                    meeting_id,
+                )
 
                 return {
-                    'id': meeting['id'],
-                    'title': meeting['title'],
-                    'created_at': meeting['created_at'].isoformat() if meeting['created_at'] else None,
-                    'updated_at': meeting['updated_at'].isoformat() if meeting['updated_at'] else None,
-                    'owner_id': meeting['owner_id'],
-                    'workspace_id': meeting['workspace_id'],
-                    'transcripts': [{
-                        'id': meeting_id,
-                        'text': t['transcript'],
-                        'timestamp': t['timestamp'],
-                        'audio_start_time': t['audio_start_time'],
-                        'audio_end_time': t['audio_end_time'],
-                        'duration': t['duration']
-                    } for t in transcripts]
+                    "id": meeting["id"],
+                    "title": meeting["title"],
+                    "created_at": meeting["created_at"].isoformat()
+                    if meeting["created_at"]
+                    else None,
+                    "updated_at": meeting["updated_at"].isoformat()
+                    if meeting["updated_at"]
+                    else None,
+                    "owner_id": meeting["owner_id"],
+                    "workspace_id": meeting["workspace_id"],
+                    "transcripts": [
+                        {
+                            "id": str(t["id"]),
+                            "text": t["transcript"],
+                            "timestamp": t["timestamp"],
+                            "audio_start_time": t["audio_start_time"],
+                            "audio_end_time": t["audio_end_time"],
+                            "duration": t["duration"],
+                            "speaker": t["speaker"],
+                            "speaker_confidence": t["speaker_confidence"],
+                            "source": t["source"],
+                            "alignment_state": t["alignment_state"],
+                        }
+                        for t in transcripts
+                    ],
                 }
         except Exception as e:
             logger.error(f"Error getting meeting: {str(e)}")
@@ -289,12 +599,15 @@ class DatabaseManager:
         """Get the full transcript text from full_transcripts table"""
         try:
             async with self._get_connection() as conn:
-                row = await conn.fetchrow("""
+                row = await conn.fetchrow(
+                    """
                     SELECT transcript_text
                     FROM full_transcripts
                     WHERE meeting_id = $1
-                """, meeting_id)
-                return row['transcript_text'] if row else None
+                """,
+                    meeting_id,
+                )
+                return row["transcript_text"] if row else None
         except Exception as e:
             logger.error(f"Error getting full transcript: {str(e)}")
             return None
@@ -303,11 +616,16 @@ class DatabaseManager:
         """Update a meeting's title"""
         now = datetime.utcnow()
         async with self._get_connection() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 UPDATE meetings
                 SET title = $1, updated_at = $2
                 WHERE id = $3
-            """, new_title, now, meeting_id)
+            """,
+                new_title,
+                now,
+                meeting_id,
+            )
 
     async def get_all_meetings(self):
         """Get all meetings with basic information"""
@@ -317,46 +635,57 @@ class DatabaseManager:
                 FROM meetings
                 ORDER BY created_at DESC
             """)
-            return [{
-                'id': row['id'],
-                'title': row['title'],
-                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
-                'owner_id': row['owner_id'],
-                'workspace_id': row['workspace_id']
-            } for row in rows]
+            return [
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "created_at": row["created_at"].isoformat()
+                    if row["created_at"]
+                    else None,
+                    "owner_id": row["owner_id"],
+                    "workspace_id": row["workspace_id"],
+                }
+                for row in rows
+            ]
 
     async def delete_meeting(self, meeting_id: str):
         """Delete a meeting and all its associated data"""
         if not meeting_id or not meeting_id.strip():
             raise ValueError("meeting_id cannot be empty")
-            
+
         try:
             async with self._get_connection() as conn:
                 # Postgres CASCADE delete handles dependent rows if configured in FKs.
                 # Our migration script added ON DELETE CASCADE, so we just delete from meetings.
-                result = await conn.execute("DELETE FROM meetings WHERE id = $1", meeting_id)
-                
+                result = await conn.execute(
+                    "DELETE FROM meetings WHERE id = $1", meeting_id
+                )
+
                 if result == "DELETE 0":
                     logger.warning(f"Meeting {meeting_id} not found for deletion")
                     return False
-                
+
                 logger.info(f"Successfully deleted meeting {meeting_id} (and cascaded)")
                 return True
-                    
+
         except Exception as e:
-            logger.error(f"Database connection error in delete_meeting: {str(e)}", exc_info=True)
+            logger.error(
+                f"Database connection error in delete_meeting: {str(e)}", exc_info=True
+            )
             return False
 
     async def get_model_config(self):
         """Get the current model configuration"""
         async with self._get_connection() as conn:
             # Postgres column is likely lowercase 'whispermodel'
-            row = await conn.fetchrow("SELECT provider, model, whisperModel FROM settings")
+            row = await conn.fetchrow(
+                "SELECT provider, model, whisperModel FROM settings"
+            )
             if row:
                 return {
                     "provider": row["provider"],
                     "model": row["model"],
-                    "whisperModel": row["whispermodel"]
+                    "whisperModel": row["whispermodel"],
                 }
             return None
 
@@ -366,16 +695,24 @@ class DatabaseManager:
             async with self._get_connection() as conn:
                 # Upsert settings (assuming id='1' is the singleton config)
                 # Use unquoted whisperModel to match lowercase column
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO settings (id, provider, model, whisperModel)
                     VALUES ($1, $2, $3, $4)
                     ON CONFLICT (id) DO UPDATE SET
                         provider = EXCLUDED.provider,
                         model = EXCLUDED.model,
                         whisperModel = EXCLUDED.whisperModel
-                """, '1', provider, model, whisperModel)
-                
-                logger.info(f"Successfully saved model configuration: {provider}/{model}")
+                """,
+                    "1",
+                    provider,
+                    model,
+                    whisperModel,
+                )
+
+                logger.info(
+                    f"Successfully saved model configuration: {provider}/{model}"
+                )
         except Exception as e:
             logger.error(f"Failed to save model configuration: {str(e)}", exc_info=True)
             raise
@@ -387,36 +724,42 @@ class DatabaseManager:
             "claude": "anthropicapikey",
             "groq": "groqapikey",
             "ollama": "ollamaapikey",
-            "gemini": "geminiapikey"
+            "gemini": "geminiapikey",
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")
-        
+
         column_name = provider_map[provider]
-        
+
         try:
             async with self._get_connection() as conn:
                 # Check if row exists, if not insert default, then update
-                # Or just Upsert with COALESCE for other fields? 
+                # Or just Upsert with COALESCE for other fields?
                 # Simpler: Upsert a new row if not exists, then update specific column
-                
+
                 # Ensure row 1 exists
                 await conn.execute("""
                     INSERT INTO settings (id, provider, model, whisperModel)
                     VALUES ('1', 'openai', 'gpt-4o', 'large-v3')
                     ON CONFLICT (id) DO NOTHING
                 """)
-                
+
                 # Update specific key
                 # Note: We can't use dynamic column name in execute params, must be f-string safely
                 # column_name is from a safe whitelist above.
-                await conn.execute(f"""
+                await conn.execute(
+                    f"""
                     UPDATE settings SET "{column_name}" = $1 WHERE id = '1'
-                """, api_key)
-                
+                """,
+                    api_key,
+                )
+
                 logger.info(f"Successfully saved API key for provider: {provider}")
         except Exception as e:
-            logger.error(f"Failed to save API key for provider {provider}: {str(e)}", exc_info=True)
+            logger.error(
+                f"Failed to save API key for provider {provider}: {str(e)}",
+                exc_info=True,
+            )
             raise
 
     async def get_api_key(self, provider: str, user_email: Optional[str] = None):
@@ -431,14 +774,16 @@ class DatabaseManager:
             "claude": "anthropicapikey",
             "groq": "groqapikey",
             "ollama": "ollamaapikey",
-            "gemini": "geminiapikey"
+            "gemini": "geminiapikey",
         }
         if provider not in provider_map:
             return ""
-            
+
         column_name = provider_map[provider]
         async with self._get_connection() as conn:
-            val = await conn.fetchval(f"SELECT \"{column_name}\" FROM settings WHERE id = '1'")
+            val = await conn.fetchval(
+                f"SELECT \"{column_name}\" FROM settings WHERE id = '1'"
+            )
             return val if val else ""
 
     async def save_user_api_key(self, user_email: str, provider: str, api_key: str):
@@ -446,20 +791,27 @@ class DatabaseManager:
         encrypted_key = encrypt_key(api_key)
         now = datetime.utcnow()
         async with self._get_connection() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO user_api_keys (user_email, provider, api_key, updated_at)
                 VALUES ($1, $2, $3, $4)
                 ON CONFLICT(user_email, provider) DO UPDATE SET
                     api_key = EXCLUDED.api_key,
                     updated_at = EXCLUDED.updated_at
-            """, user_email, provider, encrypted_key, now)
+            """,
+                user_email,
+                provider,
+                encrypted_key,
+                now,
+            )
 
     async def get_user_api_key(self, user_email: str, provider: str) -> Optional[str]:
         """Retrieve and decrypt an API key for a specific user."""
         async with self._get_connection() as conn:
             encrypted_key = await conn.fetchval(
                 "SELECT api_key FROM user_api_keys WHERE user_email = $1 AND provider = $2 AND is_active = TRUE",
-                user_email, provider
+                user_email,
+                provider,
             )
             if encrypted_key:
                 return decrypt_key(encrypted_key)
@@ -471,11 +823,11 @@ class DatabaseManager:
         async with self._get_connection() as conn:
             rows = await conn.fetch(
                 "SELECT provider, api_key FROM user_api_keys WHERE user_email = $1 AND is_active = TRUE",
-                user_email
+                user_email,
             )
             for row in rows:
-                provider = row['provider']
-                encrypted_key = row['api_key']
+                provider = row["provider"]
+                encrypted_key = row["api_key"]
                 decrypted = decrypt_key(encrypted_key)
                 if decrypted and len(decrypted) > 8:
                     keys[provider] = f"{decrypted[:4]}...{decrypted[-4:]}"
@@ -488,7 +840,8 @@ class DatabaseManager:
         async with self._get_connection() as conn:
             await conn.execute(
                 "DELETE FROM user_api_keys WHERE user_email = $1 AND provider = $2",
-                user_email, provider
+                user_email,
+                provider,
             )
 
     async def get_transcript_config(self):
@@ -503,16 +856,24 @@ class DatabaseManager:
         """Save the transcript settings"""
         try:
             async with self._get_connection() as conn:
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO transcript_settings (id, provider, model)
                     VALUES ('1', $1, $2)
                     ON CONFLICT (id) DO UPDATE SET
                         provider = EXCLUDED.provider,
                         model = EXCLUDED.model
-                """, provider, model)
-                logger.info(f"Successfully saved transcript configuration: {provider}/{model}")
+                """,
+                    provider,
+                    model,
+                )
+                logger.info(
+                    f"Successfully saved transcript configuration: {provider}/{model}"
+                )
         except Exception as e:
-            logger.error(f"Failed to save transcript configuration: {str(e)}", exc_info=True)
+            logger.error(
+                f"Failed to save transcript configuration: {str(e)}", exc_info=True
+            )
             raise
 
     async def save_transcript_api_key(self, api_key: str, provider: str):
@@ -522,27 +883,39 @@ class DatabaseManager:
             "deepgram": "deepgramapikey",
             "elevenLabs": "elevenlabsapikey",
             "groq": "groqapikey",
-            "openai": "openaiapikey"
+            "openai": "openaiapikey",
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")
-            
+
         column_name = provider_map[provider]
-        
+
         try:
             async with self._get_connection() as conn:
-                await conn.execute("INSERT INTO transcript_settings (id, provider, model) VALUES ('1', 'localWhisper', 'large-v3') ON CONFLICT (id) DO NOTHING")
-                
-                await conn.execute(f"""
+                await conn.execute(
+                    "INSERT INTO transcript_settings (id, provider, model) VALUES ('1', 'localWhisper', 'large-v3') ON CONFLICT (id) DO NOTHING"
+                )
+
+                await conn.execute(
+                    f"""
                     UPDATE transcript_settings SET "{column_name}" = $1 WHERE id = '1'
-                """, api_key)
-                
-                logger.info(f"Successfully saved transcript API key for provider: {provider}")
+                """,
+                    api_key,
+                )
+
+                logger.info(
+                    f"Successfully saved transcript API key for provider: {provider}"
+                )
         except Exception as e:
-            logger.error(f"Failed to save transcript API key for provider {provider}: {str(e)}", exc_info=True)
+            logger.error(
+                f"Failed to save transcript API key for provider {provider}: {str(e)}",
+                exc_info=True,
+            )
             raise
 
-    async def get_transcript_api_key(self, provider: str, user_email: Optional[str] = None):
+    async def get_transcript_api_key(
+        self, provider: str, user_email: Optional[str] = None
+    ):
         """Get the transcript API key"""
         if user_email:
             user_key = await self.get_user_api_key(user_email, provider)
@@ -554,46 +927,55 @@ class DatabaseManager:
             "deepgram": "deepgramapikey",
             "elevenLabs": "elevenlabsapikey",
             "groq": "groqapikey",
-            "openai": "openaiapikey"
+            "openai": "openaiapikey",
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")
-            
+
         column_name = provider_map[provider]
         async with self._get_connection() as conn:
-            val = await conn.fetchval(f"SELECT \"{column_name}\" FROM transcript_settings WHERE id = '1'")
+            val = await conn.fetchval(
+                f"SELECT \"{column_name}\" FROM transcript_settings WHERE id = '1'"
+            )
             return val if val else ""
 
     async def search_transcripts(self, query: str):
         """Search through meeting transcripts for the given query"""
         if not query or query.strip() == "":
             return []
-            
+
         search_query = f"%{query.lower()}%"
-        
+
         try:
             async with self._get_connection() as conn:
                 # 1. Search transcript_segments table
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT m.id, m.title, ts.transcript, ts.timestamp
                     FROM meetings m
                     JOIN transcript_segments ts ON m.id = ts.meeting_id
                     WHERE LOWER(ts.transcript) LIKE $1
                     ORDER BY m.created_at DESC
-                """, search_query)
-                
+                """,
+                    search_query,
+                )
+
                 # 2. Search full_transcripts table
-                chunk_rows = await conn.fetch("""
+                chunk_rows = await conn.fetch(
+                    """
                     SELECT m.id, m.title, ft.transcript_text
                     FROM meetings m
                     JOIN full_transcripts ft ON m.id = ft.meeting_id
                     WHERE LOWER(ft.transcript_text) LIKE $1
                     AND m.id NOT IN (SELECT DISTINCT meeting_id FROM transcript_segments WHERE LOWER(transcript) LIKE $2)
                     ORDER BY m.created_at DESC
-                """, search_query, search_query)
-                
+                """,
+                    search_query,
+                    search_query,
+                )
+
                 results = []
-                
+
                 # Helper to format results
                 def format_match(row, text_col):
                     text = row[text_col]
@@ -602,24 +984,27 @@ class DatabaseManager:
                     start = max(0, match_idx - 100)
                     end = min(len(text), match_idx + len(query) + 100)
                     context = text[start:end]
-                    if start > 0: context = "..." + context
-                    if end < len(text): context += "..."
-                    
+                    if start > 0:
+                        context = "..." + context
+                    if end < len(text):
+                        context += "..."
+
                     return {
-                        'id': row['id'],
-                        'title': row['title'],
-                        'matchContext': context,
-                        'timestamp': row.get('timestamp') or datetime.utcnow().isoformat()
+                        "id": row["id"],
+                        "title": row["title"],
+                        "matchContext": context,
+                        "timestamp": row.get("timestamp")
+                        or datetime.utcnow().isoformat(),
                     }
 
                 for row in rows:
-                    results.append(format_match(row, 'transcript'))
-                    
+                    results.append(format_match(row, "transcript"))
+
                 for row in chunk_rows:
-                    results.append(format_match(row, 'transcript_text'))
-                    
+                    results.append(format_match(row, "transcript_text"))
+
                 return results
-                
+
         except Exception as e:
             logger.error(f"Error searching transcripts: {str(e)}")
             raise
@@ -631,14 +1016,16 @@ class DatabaseManager:
             "claude": "anthropicapikey",
             "groq": "groqapikey",
             "ollama": "ollamaapikey",
-            "gemini": "geminiapikey"
+            "gemini": "geminiapikey",
         }
         if provider not in provider_map:
             raise ValueError(f"Invalid provider: {provider}")
-            
+
         column_name = provider_map[provider]
         async with self._get_connection() as conn:
-            await conn.execute(f"UPDATE settings SET \"{column_name}\" = NULL WHERE id = '1'")
+            await conn.execute(
+                f"UPDATE settings SET \"{column_name}\" = NULL WHERE id = '1'"
+            )
 
     async def update_meeting_summary(self, meeting_id: str, summary: dict):
         """Update a meeting's summary"""
@@ -647,24 +1034,35 @@ class DatabaseManager:
             async with self._get_connection() as conn:
                 async with conn.transaction():
                     # Check existence
-                    exists = await conn.fetchval("SELECT id FROM meetings WHERE id = $1", meeting_id)
+                    exists = await conn.fetchval(
+                        "SELECT id FROM meetings WHERE id = $1", meeting_id
+                    )
                     if not exists:
                         raise ValueError(f"Meeting with ID {meeting_id} not found")
-                    
+
                     # Update summary_processes
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         UPDATE summary_processes
                         SET result = $1, updated_at = $2
                         WHERE meeting_id = $3
-                    """, json.dumps(summary), now, meeting_id)
-                    
+                    """,
+                        json.dumps(summary),
+                        now,
+                        meeting_id,
+                    )
+
                     # Update meetings timestamp
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         UPDATE meetings
                         SET updated_at = $1
                         WHERE id = $2
-                    """, now, meeting_id)
-                    
+                    """,
+                        now,
+                        meeting_id,
+                    )
+
                     return True
         except Exception as e:
             logger.error(f"Error updating meeting summary: {str(e)}")

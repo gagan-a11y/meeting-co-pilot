@@ -9,6 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class RollingAudioBuffer:
     """
     Maintains a sliding window of audio for streaming transcription.
@@ -24,8 +25,8 @@ class RollingAudioBuffer:
     def __init__(
         self,
         window_duration_ms: int = 2000,  # 2 seconds
-        slide_duration_ms: int = 500,    # 500ms step
-        sample_rate: int = 16000
+        slide_duration_ms: int = 500,  # 500ms step
+        sample_rate: int = 16000,
     ):
         """
         Args:
@@ -83,7 +84,7 @@ class RollingAudioBuffer:
         if len(self.buffer) < self.window_size:
             # Pad with zeros if buffer not full yet
             window = np.zeros(self.window_size, dtype=np.int16)
-            window[-len(self.buffer):] = list(self.buffer)
+            window[-len(self.buffer) :] = list(self.buffer)
             return window
 
         return np.array(self.buffer, dtype=np.int16)
@@ -106,6 +107,13 @@ class RollingAudioBuffer:
         # Use 90% threshold to avoid edge cases where buffer never fully fills
         min_viable_size = int(self.window_size * 0.9)
         return len(self.buffer) >= min_viable_size
+
+    def get_all_samples_bytes(self) -> bytes:
+        """
+        Get all samples currently in the buffer as raw bytes.
+        Useful for flushing remaining audio.
+        """
+        return np.array(self.buffer, dtype=np.int16).tobytes()
 
     def clear(self):
         """Clear the buffer"""

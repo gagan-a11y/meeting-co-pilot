@@ -25,6 +25,7 @@ interface RecordingControlsProps {
     systemDevice: string | null;
   };
   meetingName?: string;
+  onSessionIdReceived?: (sessionId: string) => void;
 }
 
 export const RecordingControls: React.FC<RecordingControlsProps> = ({
@@ -37,6 +38,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   onStopInitiated,
   isRecordingDisabled,
   isParentProcessing,
+  onSessionIdReceived
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -87,6 +89,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       await client.start({
         onConnected: (sessionId) => {
           console.log('✅ Connected to streaming service, session:', sessionId);
+          if (onSessionIdReceived) onSessionIdReceived(sessionId);
         },
 
         onPartial: (text, confidence, isStable) => {
@@ -94,7 +97,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           console.log('[Partial]', text.substring(0, 50) + '...', `(stable: ${isStable})`);
         },
 
-        onFinal: (text, confidence, reason) => {
+        onFinal: (text, confidence, reason, timing) => {
           // Final transcripts (black, locked) - main content
           console.log('📝 [RecordingControls] Final transcript:', text.substring(0, 50) + '...');
 
@@ -103,6 +106,9 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
             timestamp: new Date().toISOString(),
             sequence_id: Date.now(),
             is_partial: false,
+            audio_start_time: timing?.start,
+            audio_end_time: timing?.end,
+            duration: timing?.duration
           };
 
           if (onTranscriptReceived) {

@@ -70,7 +70,6 @@ function MeetingDetailsContent() {
 
         await authFetch('/save-model-config', {
           method: 'POST',
-          // headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             provider: 'ollama',
             model: 'gemma3:1b',
@@ -92,31 +91,85 @@ function MeetingDetailsContent() {
 
   // Extract fetchMeetingDetails so it can be called from child components
   const fetchMeetingDetails = useCallback(async () => {
-    if (!meetingId || meetingId === 'intro-call') {
+    if (!meetingId || meetingId === 'intro-call' || !serverAddress) {
       return;
     }
 
     try {
-      // serverAddress might be empty initially
-      if (!serverAddress) return;
-
       const response = await authFetch(`/get-meeting/${meetingId}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const data = await response.json();
-
-
       console.log('Meeting details:', data);
       setMeetingDetails(data);
-
-      // Sync with sidebar context
       setCurrentMeeting({ id: data.id, title: data.title });
     } catch (error) {
       console.error('Error fetching meeting details:', error);
       setError("Failed to load meeting details");
     }
   }, [meetingId, setCurrentMeeting, serverAddress]);
+
+  const fetchMeetingSummary = useCallback(async () => {
+    if (!meetingId || meetingId === 'intro-call' || !serverAddress) return;
+    try {
+      const response = await authFetch(`/get-summary/${meetingId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const summary = await response.json();
+      console.log('🔍 FETCH SUMMARY: Raw response:', summary);
+
+      if (summary.status === 'error' || summary.error || summary.status === 'idle') {
+        setMeetingSummary(null);
+        return;
+      }
+
+      const summaryData = summary.data || {};
+      let parsedData = summaryData;
+      if (typeof summaryData === 'string') {
+        try {
+          parsedData = JSON.parse(summaryData);
+        } catch (e) {
+          parsedData = {};
+        }
+      }
+
+      if (parsedData.summary_json || parsedData.markdown) {
+        setMeetingSummary(parsedData as any);
+        return;
+      }
+
+      // Legacy format handling
+      const { MeetingName, _section_order, ...restSummaryData } = parsedData;
+      const formattedSummary: Summary = {};
+      const sectionKeys = _section_order || Object.keys(restSummaryData);
+
+      for (const key of sectionKeys) {
+        const section = restSummaryData[key];
+        if (section && typeof section === 'object' && 'title' in section && 'blocks' in section) {
+          formattedSummary[key] = {
+            title: section.title || key,
+            blocks: Array.isArray(section.blocks) ? section.blocks.map((block: any) => ({
+              ...block,
+              color: 'default',
+              content: block?.content?.trim() || ''
+            })) : []
+          };
+        }
+      }
+      setMeetingSummary(formattedSummary);
+    } catch (error) {
+      console.error('❌ FETCH SUMMARY Error:', error);
+      setMeetingSummary(null);
+    }
+  }, [meetingId, serverAddress]);
+
+  const handleMeetingUpdated = useCallback(async () => {
+    await fetchMeetingDetails();
+    await fetchMeetingSummary();
+    await refetchMeetings();
+  }, [fetchMeetingDetails, fetchMeetingSummary, refetchMeetings]);
 
   // Reset states when meetingId changes
   useEffect(() => {
@@ -126,134 +179,16 @@ function MeetingDetailsContent() {
     setIsLoading(true);
   }, [meetingId]);
 
+  // Initial load
   useEffect(() => {
-    console.log('🔍 MeetingDetails useEffect triggered - meetingId:', meetingId);
-
     if (!meetingId || meetingId === 'intro-call') {
-      console.warn('⚠️ No valid meeting ID in URL - meetingId:', meetingId);
       setError("No meeting selected");
       setIsLoading(false);
-      Analytics.trackPageView('meeting_details');
       return;
     }
 
-    console.log('✅ Valid meeting ID found, fetching details for:', meetingId);
-
-    setMeetingDetails(null);
-    setMeetingSummary(null);
-    setError(null);
-    setIsLoading(true);
-
-    const fetchMeetingSummary = async () => {
-      try {
-        if (!serverAddress) return;
-
-        const response = await authFetch(`/get-summary/${meetingId}`);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const summary = await response.json();
-
-        console.log('🔍 FETCH SUMMARY: Raw response:', summary);
-
-        // Check if the summary request failed with 404 or error status, or if no summary exists yet (idle)
-        if (summary.status === 'error' || summary.error || summary.status === 'idle') {
-          console.warn('Meeting summary not found, error occurred, or no summary generated yet:', summary.error || 'idle');
-          setMeetingSummary(null);
-          return;
-        }
-
-        const summaryData = summary.data || {};
-
-        // Parse if it's a JSON string (backend may return double-encoded JSON)
-        let parsedData = summaryData;
-        if (typeof summaryData === 'string') {
-          try {
-            parsedData = JSON.parse(summaryData);
-          } catch (e) {
-            parsedData = {};
-          }
-        }
-
-        console.log('🔍 FETCH SUMMARY: Parsed data:', parsedData);
-
-        // Priority 1: BlockNote JSON format
-        if (parsedData.summary_json) {
-          setMeetingSummary(parsedData as any);
-          return;
-        }
-
-        // Priority 2: Markdown format
-        if (parsedData.markdown) {
-          setMeetingSummary(parsedData as any);
-          return;
-        }
-
-        // Legacy format - apply formatting
-        console.log('📦 LEGACY FORMAT: Detected legacy format, applying section formatting');
-
-        const { MeetingName, _section_order, ...restSummaryData } = parsedData;
-
-        // Format the summary data with consistent styling - PRESERVE ORDER
-        const formattedSummary: Summary = {};
-
-        // Use section order if available to maintain exact order and handle duplicates
-        const sectionKeys = _section_order || Object.keys(restSummaryData);
-
-        console.log('📦 LEGACY FORMAT: Processing sections:', sectionKeys);
-
-        for (const key of sectionKeys) {
-          try {
-            const section = restSummaryData[key];
-            // Comprehensive null checks to prevent the error
-            if (section &&
-              typeof section === 'object' &&
-              'title' in section &&
-              'blocks' in section) {
-
-              const typedSection = section as { title?: string; blocks?: any[] };
-
-              // Ensure blocks is an array before mapping
-              if (Array.isArray(typedSection.blocks)) {
-                formattedSummary[key] = {
-                  title: typedSection.title || key,
-                  blocks: typedSection.blocks.map((block: any) => ({
-                    ...block,
-                    // type: 'bullet',
-                    color: 'default',
-                    content: block?.content?.trim() || ''
-                  }))
-                };
-              } else {
-                // Handle case where blocks is not an array
-                console.warn(`📦 LEGACY FORMAT: Section ${key} has invalid blocks:`, typedSection.blocks);
-                formattedSummary[key] = {
-                  title: typedSection.title || key,
-                  blocks: []
-                };
-              }
-            } else {
-              console.warn(`📦 LEGACY FORMAT: Skipping invalid section ${key}:`, section);
-            }
-          } catch (error) {
-            console.warn(`📦 LEGACY FORMAT: Error processing section ${key}:`, error);
-            // Continue processing other sections
-          }
-        }
-
-        console.log('📦 LEGACY FORMAT: Formatted summary:', formattedSummary);
-        setMeetingSummary(formattedSummary);
-      } catch (error) {
-        console.error('❌ FETCH SUMMARY: Error fetching meeting summary:', error);
-        // Don't set error state for summary fetch failure, set to null to show generate button
-        setMeetingSummary(null);
-      }
-    };
-
     const loadData = async () => {
-      // serverAddress might be empty initially
       if (!serverAddress) return;
-
       try {
         await Promise.all([
           fetchMeetingDetails(),
@@ -267,59 +202,46 @@ function MeetingDetailsContent() {
     if (serverAddress) {
       loadData();
     }
+  }, [meetingId, fetchMeetingDetails, fetchMeetingSummary, serverAddress]);
 
-  }, [meetingId, fetchMeetingDetails, serverAddress]);
-
-  // Poll for summary if it doesn't exist yet (notes are generated automatically by backend)
+  // Poll for summary if missing
   useEffect(() => {
-    if (
-      meetingDetails &&
-      meetingSummary === null &&
-      meetingDetails.transcripts &&
-      meetingDetails.transcripts.length > 0
-    ) {
-      // Notes are generated automatically by backend when meeting ends
-      // Poll for the summary to appear (it may still be processing)
+    if (meetingDetails && meetingSummary === null && (meetingDetails.transcripts?.length || 0) > 0) {
       const pollInterval = setInterval(async () => {
-        console.log(`🔄 Polling for summary for meeting ${meetingId}...`);
         try {
           if (!serverAddress) return;
           const response = await authFetch(`/get-summary/${meetingId}`);
           if (response.ok) {
             const summary = await response.json();
-            if (summary.status !== 'error' && summary.data) {
-              // Summary is ready, reload the page or update state
-              window.location.reload();
+            if (summary.status === 'completed' && summary.data) {
+              clearInterval(pollInterval);
+              await fetchMeetingSummary();
+            } else if (summary.status === 'error') {
+              clearInterval(pollInterval);
             }
           }
         } catch (error) {
-          console.error('Error polling for summary:', error);
+          console.error('Error polling summary:', error);
         }
-      }, 3000); // Poll every 3 seconds
+      }, 5000);
 
-      // Stop polling after 2 minutes
       const timeout = setTimeout(() => {
         clearInterval(pollInterval);
-        console.log('⏱️ Stopped polling for summary after 2 minutes');
-      }, 120000);
+      }, 180000);
 
       return () => {
         clearInterval(pollInterval);
         clearTimeout(timeout);
       };
     }
-  }, [meetingDetails, meetingSummary, meetingId, serverAddress]);
-
+  }, [meetingDetails, meetingSummary, meetingId, serverAddress, fetchMeetingSummary]);
 
   if (error) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <p className="text-red-500 mb-4">{error}</p>
-          <button
-            onClick={() => router.push('/')}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-          >
+          <button onClick={() => router.push('/')} className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
             Go Back
           </button>
         </div>
@@ -328,9 +250,7 @@ function MeetingDetailsContent() {
   }
 
   if (isLoading || !meetingDetails) {
-    return <div className="flex items-center justify-center h-screen">
-      <LoaderIcon className="animate-spin size-6 " />
-    </div>;
+    return <div className="flex items-center justify-center h-screen"><LoaderIcon className="animate-spin size-6" /></div>;
   }
 
   return <PageContent
@@ -338,22 +258,13 @@ function MeetingDetailsContent() {
     summaryData={meetingSummary}
     shouldAutoGenerate={shouldAutoGenerate}
     onAutoGenerateComplete={() => setShouldAutoGenerate(false)}
-    onMeetingUpdated={async () => {
-      // Refetch meeting details to get updated title from backend
-      await fetchMeetingDetails();
-      // Refetch meetings list to update sidebar
-      await refetchMeetings();
-    }}
+    onMeetingUpdated={handleMeetingUpdated}
   />;
 }
 
 export default function MeetingDetails() {
   return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center h-screen">
-        <LoaderIcon className="animate-spin size-6" />
-      </div>
-    }>
+    <Suspense fallback={<div className="flex items-center justify-center h-screen"><LoaderIcon className="animate-spin size-6" /></div>}>
       <MeetingDetailsContent />
     </Suspense>
   );

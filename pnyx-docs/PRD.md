@@ -70,39 +70,40 @@ Fork and extend **Meetily** (open-source, 7k+ GitHub stars) to add multi-partici
 
 ---
 
+## 🛑 Reality vs Original Vision (Jan 2026 Audit)
+
+**The Pivot:**
+The original vision was a "Google Docs for Meetings" — multi-user, real-time sync, collaborative editing.
+**The Reality:** We have built a **"Super-Powered Recorder"** — a single-host tool that records, transcribes, and provides AI assistance.
+
+**Why the change?**
+1.  **Technical Complexity:** Real-time multi-user state sync (CRDTs/OT) was too high-risk for MVP.
+2.  **Use Case Clarity:** 95% of users just want *better notes*, not another collaboration tool to manage during a meeting.
+3.  **Performance:** Browser-based audio handling + multi-user streaming introduced unacceptable latency.
+
+**Current Architecture:**
+- **Single Host:** One user records via browser.
+- **Cloud/Local AI:** Heavy lifting by Groq (Transcription) and Gemini/Ollama (Reasoning).
+- **Post-Hoc Sharing:** Notes are shared *after* generation, not co-typed in real-time.
+
+---
+
 ## 2. Goals & Non-Goals
 
-### ✅ Goals (What We WILL Do)
+### ✅ Goals (Status Audit)
 
-**G1: Enable shared meeting context**
-All participants see the same live transcript, decisions, and action items in real-time via their laptops.
-
-**G2: Eliminate "corporate amnesia"**
-Every meeting produces structured, searchable outputs that persist and can be referenced in future meetings.
-
-**G3: Support on-site meetings**
-Primary use case is in-person meetings with room microphone, participants joining via their laptops.
-
-**G4: Provide instant catch-up**
-Participants who zone out can get an AI-generated summary of what they missed without interrupting the meeting.
-
-**G5: Enable cross-meeting continuity**
-Link related meetings and surface relevant past context (decisions, open actions, unresolved questions).
-
-**G6: Automate action tracking**
-Extract action items with owners and deadlines, track status, surface incomplete items in follow-up meetings.
-
-**G7: Answer questions in real-time**
-AI assistant that can answer questions using meeting context and past meeting history during the meeting.
-
-**G8: Secure Access & RBAC**
-Secure access restricted to organization domain (`@appointy.com`), with workspace and meeting-level permissions to ensure privacy and control.
-
-**G9: Dynamic Chat-Based Notes**
-Allow users to refine and edit meeting notes using a chat interface, moving beyond static document generation.
-
-**G10: Personal API Key Support**
-Enable users to bring their own API keys (e.g., Grok) for personalized cost management and specialized model access.
+| Goal | Status | Notes |
+| :--- | :--- | :--- |
+| **G1: Enable shared meeting context** | ⚠️ Changed | Context is shared *post-meeting* or via screen share, not multi-device sync. |
+| **G2: Eliminate "corporate amnesia"** | ✅ Working | VectorDB + History search is implemented. |
+| **G3: Support on-site meetings** | ✅ Working | Room mic capture works well. |
+| **G4: Provide instant catch-up** | ✅ Working | "Catch Me Up" feature is implemented and functional. |
+| **G5: Enable cross-meeting continuity** | ✅ Working | Logic is implemented, but the **Linking UX is rough** and needs attention. |
+| **G6: Automate action tracking** | ✅ Working | AI extraction is reliable. |
+| **G7: Answer questions in real-time** | ⚠️ Unstable | "Ask AI" chat is functional but requires attention for reliability. |
+| **G8: Secure Access & RBAC** | ✅ Working | Basic auth and domain restriction implemented. |
+| **G9: Dynamic Chat-Based Notes** | ✅ Working | Chat interface for notes is active. |
+| **G10: Personal API Key Support** | ✅ Working | User settings for API keys implemented. |
 
 ### ❌ Non-Goals (What We Will NOT Do)
 
@@ -590,8 +591,8 @@ The original Meetily project is built as a Tauri-based desktop application. This
 | **Phase 1: Core Web App** | 5-7 days | Jan 2, 2025 | Jan 5, 2026 | 7 days | ✅ **COMPLETE** | Host can record meeting in browser with live transcript |
 | **Phase 1.5: Groq Streaming** | 2 days | Jan 5, 2026 | Jan 5, 2026 | 2 days | ✅ **COMPLETE** | Real-time Groq Whisper streaming transcription |
 | **Phase 2: Multi-Participant Sessions** | 3-4 days | - | - | - | ⏸️ **SKIPPED** | Deferred - not priority for single-user use case |
-| **Phase 3: AI Features** | 4-5 days | Jan 6, 2026 | - | 5 days | 🔜 **NEXT** | "Catch Me Up", Real-time Q&A, Decision/Action extraction |
-| **Phase 4: Cross-Meeting Context** | 3-4 days | - | - | 5 days | 📋 Planned | VectorDB integration, meeting linking, context search |
+| **Phase 3: AI Features** | 4-5 days | Jan 6, 2026 | - | 5 days | ⚠️ **PARTIAL** | "Catch Me Up" is done; Q&A needs attention. |
+| **Phase 4: Cross-Meeting Context** | 3-4 days | - | - | 5 days | ✅ **COMPLETE** | Logic is done; **Linking UX is rough** and needs attention. |
 | **Phase 5: Post-Meeting & Polish** | 3-4 days | - | - | 5 days | 📋 Planned | Export, history, UI polish, production-ready |
 
 **Total Duration**: 25 working days (5 weeks) including buffer
@@ -606,9 +607,9 @@ The original Meetily project is built as a Tauri-based desktop application. This
 | **M1: Web Audio Working** | ✅ Jan 5, 2026 | Single-user web recording functional | Browser can capture audio, stream to Whisper, display real-time transcript |
 | **M1.5: Groq Streaming** | ✅ Jan 5, 2026 | Real-time streaming transcription | Continuous PCM streaming to Groq Whisper API with 1-2s latency |
 | **M2: Multi-User Sessions** | ⏸️ SKIPPED | Collaborative sessions functional | Deferred - single-user AI features are priority |
-| **M3: MVP Demo** | 🔜 **NEXT** | Core AI features working | "Catch Me Up" and Real-time Q&A functional during live meeting |
-| **M4: Full Feature Set** | 📋 Planned | Cross-meeting context working | Can link meetings, search past context, surface related decisions |
-| **M5: Production Launch** | 📋 Planned | Polished and production-ready | Export working, error handling complete, ready for office deployment |
+| **M3: MVP Demo** | ⚠️ **PARTIAL** | Core AI features are partially stable | "Catch Me Up" is done; Q&A requires more work. |
+| **M4: Full Feature Set** | ✅ **COMPLETE** | Cross-meeting context is implemented | Can link meetings and search across transcriptions. |
+| **M5: Production Launch** | 🔜 **NEXT** | Polished and production-ready | The stabilization plan must be completed first. |
 
 ### Weekly Breakdown
 

@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, FolderOpen } from 'lucide-react';
+import { Copy, FolderOpen, Users, Loader2 } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 
 
@@ -10,16 +10,45 @@ interface TranscriptButtonGroupProps {
   transcriptCount: number;
   onCopyTranscript: () => void;
   onOpenMeetingFolder: () => Promise<void>;
+  onDiarize?: () => void;
+  diarizationStatus?: string;
+  isDiarizing?: boolean;
 }
 
 
 export function TranscriptButtonGroup({
   transcriptCount,
   onCopyTranscript,
-  onOpenMeetingFolder
+  onOpenMeetingFolder,
+  onDiarize,
+  diarizationStatus,
+  isDiarizing
 }: TranscriptButtonGroupProps) {
   return (
-    <div className="flex items-center justify-center w-full gap-2">
+    <div className="flex items-center justify-between w-full">
+      <div className="flex gap-2">
+        {onDiarize && diarizationStatus !== 'not_recorded' && (
+          <Button
+            size="sm"
+            variant={diarizationStatus === 'completed' ? "outline" : (diarizationStatus === 'processing' ? "secondary" : "default")}
+            className={diarizationStatus === 'completed' ? "" : "bg-indigo-600 hover:bg-indigo-700 text-white"}
+            onClick={onDiarize}
+            disabled={isDiarizing || diarizationStatus === 'processing' || diarizationStatus === 'completed'}
+          >
+            {isDiarizing || diarizationStatus === 'processing' ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Users className="mr-2 h-4 w-4" />
+            )}
+            <span className="hidden lg:inline">
+              {diarizationStatus === 'processing' ? 'Identifying...' :
+                (diarizationStatus === 'completed' ? 'Speakers Identified' : 
+                 (diarizationStatus === 'failed' ? 'Failed (Retry)' : 'Identify Speakers'))}
+            </span>
+          </Button>
+        )}
+      </div>
+
       <ButtonGroup>
         <Button
           variant="outline"
@@ -31,7 +60,7 @@ export function TranscriptButtonGroup({
           disabled={transcriptCount === 0}
           title={transcriptCount === 0 ? 'No transcript available' : 'Copy Transcript'}
         >
-          <Copy />
+          <Copy className="h-4 w-4 lg:mr-2" />
           <span className="hidden lg:inline">Copy</span>
         </Button>
 
@@ -45,7 +74,7 @@ export function TranscriptButtonGroup({
           }}
           title="Open Recording Folder"
         >
-          <FolderOpen className="xl:mr-2" size={18} />
+          <FolderOpen className="h-4 w-4 lg:mr-2" />
           <span className="hidden lg:inline">Recording</span>
         </Button>
       </ButtonGroup>

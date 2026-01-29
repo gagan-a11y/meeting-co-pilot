@@ -41,7 +41,6 @@ interface TranscriptViewProps {
   isStopping?: boolean; // Is recording being stopped (provides immediate UI feedback)
   enableStreaming?: boolean; // Enable streaming effect for live transcription UX
   speakerMap?: SpeakerMap; // NEW
-  forceShowSpeakers?: boolean; // NEW: Override to always show speakers (e.g. if diarization is complete)
 }
 
 // Helper function to format seconds as recording-relative time [MM:SS]
@@ -59,18 +58,7 @@ function formatRecordingTime(seconds: number | undefined): string {
 function formatISTTime(timestamp: string | undefined): string {
   if (!timestamp) return '[--:--]';
   try {
-    // If timestamp is already formatted like HH:MM:SS (from backend/frontend during live), parse it
-    // But typically transcript.timestamp is an ISO string or similar.
-    // If it is just a time string, we might need to be careful.
-    // Assuming ISO string or Date string.
-    
-    // Create date object (handling UTC input)
-    // If it's a simple time string like "14:30:00", we might need to prepend a date.
-    // But usually from DB/WebSocket it is full ISO.
-    
-    // Check if it looks like a time string (HH:MM:SS)
     if (/^\d{2}:\d{2}:\d{2}$/.test(timestamp)) {
-      // It's already time, just return HH:MM
       return `[${timestamp.substring(0, 5)}]`;
     }
 
@@ -161,22 +149,6 @@ function cleanStopWords(text: string): string {
   return cleanedText;
 }
 
-function getSegmentStyle(state?: string, source?: string): string {
-  // If no state provided but it's diarized, assume confident (legacy support)
-  if (!state && source === 'diarized') return 'border-l-4 border-green-500 pl-3';
-  
-  switch (state) {
-    case 'CONFIDENT':
-      return 'border-l-4 border-green-500 pl-3';
-    case 'UNCERTAIN':
-      return 'border-l-4 border-yellow-500 bg-yellow-50 pl-3';
-    case 'OVERLAP':
-      return 'border-l-4 border-orange-500 bg-orange-50 pl-3';
-    default:
-      return '';
-  }
-}
-
 export const TranscriptView: React.FC<TranscriptViewProps> = ({
   transcripts,
   isRecording = false,
@@ -184,8 +156,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
   isProcessing = false,
   isStopping = false,
   enableStreaming = false,
-  speakerMap = {},
-  forceShowSpeakers = false
+  speakerMap = {}
 }) => {
   const [speechDetected, setSpeechDetected] = useState(false);
 
@@ -316,42 +287,10 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
       {transcripts?.map((transcript, index) => {
         // Check if speaker changed from previous transcript
         const prevTranscript = index > 0 ? transcripts[index - 1] : null;
+        const showSpeaker = transcript.speaker && (index === 0 || prevTranscript?.speaker !== transcript.speaker);
+        const speakerName = speakerMap[transcript.speaker || ''] || transcript.speaker;
 
-        // RESOLVE SPEAKER: Default to "Speaker 0" if missing (matches Copy behavior)
-        const resolvedSpeaker = transcript.speaker || 'Speaker 0';
-        const prevResolvedSpeaker = prevTranscript ? (prevTranscript.speaker || 'Speaker 0') : null;
-
-        // RESOLVE SOURCE: Default to 'live' if missing (safe fallback)
-        const source = transcript.source || 'live';
-        const isLive = source === 'live';
-        
-        let showSpeaker = false;
-        if (isLive && !forceShowSpeakers) {
-             // LIVE: Only show if it's NOT Speaker 0
-             // (User wants to hide Speaker 0 during live view)
-             showSpeaker = resolvedSpeaker !== 'Speaker 0';
-        } else {
-             // DIARIZED (or Forced): Always show the label
-             showSpeaker = true;
-        }
-
-        // DEDUPLICATION: Only show if it changed from the previous segment
-        // Skip deduplication if:
-        // 1. Forced by parent prop (forceShowSpeakers) - e.g. Diarization Completed view
-        // 2. OR it is explicitly a diarized segment (source != 'live') - User wants to see every label to match Copy format
-        const shouldDeduplicate = !forceShowSpeakers && isLive;
-
-        if (index > 0 && prevResolvedSpeaker === resolvedSpeaker && shouldDeduplicate) {
-             showSpeaker = false;
-        }
-
-        const speakerName = speakerMap[resolvedSpeaker] || resolvedSpeaker;
-
-        // SAFE GUARD: Ensure both sides are defined and valid strings before comparing
-        const isStreaming = !!streamingTranscript && 
-                           !!transcript.id && 
-                           streamingTranscript.id === transcript.id;
-        
+        const isStreaming = streamingTranscript?.id === transcript.id;
         const textToShow = isStreaming ? streamingTranscript.visibleText : transcript.text;
         const filteredText = cleanStopWords(textToShow);
         const originalWasEmpty = transcript.text.trim() === '';
@@ -360,15 +299,13 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
         const sizerText = cleanStopWords(isStreaming ? streamingTranscript.fullText : transcript.text)
           || (originalWasEmpty && !isStreaming ? '[Silence]' : '');
 
-        const segmentStyle = getSegmentStyle(transcript.alignment_state, transcript.source);
-
         return (
           <motion.div
             key={transcript.id ? `${transcript.id}-${index}` : `transcript-${index}`}
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.15 }}
-            className={`mb-3 ${segmentStyle}`}
+            className="mb-3"
           >
             <div className="flex items-start gap-2">
               <Tooltip>
@@ -391,17 +328,18 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
                           showIndicator={showConfidence}
                         />
                       )}
-                      {transcript.alignment_state === 'UNCERTAIN' && (
-                        <span className="ml-2 text-yellow-600 font-bold" title="Low confidence alignment">⚠️ Uncertain</span>
-                      )}
-                      {transcript.alignment_state === 'OVERLAP' && (
-                        <span className="ml-2 text-orange-600 font-bold" title="Multiple speakers detected">👥 Overlap</span>
-                      )}
                     </span>
                   )}
                 </TooltipContent>
               </Tooltip>
               <div className="flex-1">
+                {/* Speaker Label (Group Header) */}
+                {showSpeaker && (
+                  <div className={`text-xs font-semibold mb-1 ${getSpeakerColor(transcript.speaker || '')}`}>
+                    {speakerName}
+                  </div>
+                )}
+
                 {isStreaming ? (
                   // Streaming transcript - show in bubble (full width)
                   <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
@@ -412,8 +350,8 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
                 ) : (
                   // Regular transcript - direct text for easy copy-paste
                   <div className="text-base text-gray-800 leading-relaxed">
-                    {showSpeaker && (
-                      <span className={`font-semibold mr-1 ${getSpeakerColor(resolvedSpeaker)}`}>
+                    {transcript.speaker && (
+                      <span className={`font-semibold mr-1 ${getSpeakerColor(transcript.speaker)}`}>
                         {speakerName}:
                       </span>
                     )}

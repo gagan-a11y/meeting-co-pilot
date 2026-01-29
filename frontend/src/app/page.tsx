@@ -111,6 +111,7 @@ export default function Home() {
   // Recovery State
   const [showReauthModal, setShowReauthModal] = useState(false);
   const [pendingRecoveryId, setPendingRecoveryId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null); // NEW: To link audio recording
 
   useEffect(() => {
     const checkRecoveries = async () => {
@@ -129,11 +130,11 @@ export default function Home() {
   }, []);
 
   const handleRecoverTranscripts = async (data: PendingMeetingData) => {
-      setMeetingTitle(data.title);
-      setTranscripts(data.transcripts);
-      setCurrentMeeting({ id: 'recovery', title: data.title });
-      setPendingRecoveryId(data.meetingId);
-      toast.success('Restored unsaved meeting', { description: 'Please try saving again.' });
+    setMeetingTitle(data.title);
+    setTranscripts(data.transcripts);
+    setCurrentMeeting({ id: 'recovery', title: data.title });
+    setPendingRecoveryId(data.meetingId);
+    toast.success('Restored unsaved meeting', { description: 'Please try saving again.' });
   };
 
   // Auto-save effect
@@ -144,7 +145,7 @@ export default function Home() {
       console.log('[AutoSave] Saving recovery backup...');
       const recoveryId = pendingRecoveryId || `recovery-${Date.now()}`;
       const defaultTemplate = localStorage.getItem('selectedTemplate') || 'standard_meeting';
-      
+
       try {
         await recoveryService.savePendingTranscript({
           meetingId: recoveryId,
@@ -154,7 +155,7 @@ export default function Home() {
           templateId: defaultTemplate
         });
         if (!pendingRecoveryId) {
-            setPendingRecoveryId(recoveryId);
+          setPendingRecoveryId(recoveryId);
         }
       } catch (err) {
         console.warn('[AutoSave] Failed to save backup:', err);
@@ -501,15 +502,21 @@ export default function Home() {
             id: t.id || `transcript-${Date.now()}-${Math.random().toString(36).substring(2, 9)}-${index}`,
             text: t.text,
             timestamp: t.timestamp,
-            audio_start_time: 0,
-            audio_end_time: 0,
-            duration: 0,
+            audio_start_time: t.audio_start_time || 0,
+            audio_end_time: t.audio_end_time || 0,
+            duration: t.duration || 0,
           })),
           folder_path: null,
           template_id: defaultTemplate,
+          session_id: currentSessionId,
         }),
         preventLogout: true
       });
+
+      if (response.ok) {
+        // Clear session ID after successful save
+        setCurrentSessionId(null);
+      }
 
       if (!response.ok) {
         throw new Error(`Failed to save meeting: ${response.statusText}`);
@@ -611,6 +618,9 @@ export default function Home() {
       text: update.text,
       timestamp: update.timestamp,
       sequence_id: update.sequence_id || 0,
+      audio_start_time: update.audio_start_time,
+      audio_end_time: update.audio_end_time,
+      duration: update.duration
     };
 
     setTranscripts(prev => {
@@ -946,7 +956,7 @@ export default function Home() {
   const handleCopyTranscript = useCallback(() => {
     // Format timestamps as recording-relative [MM:SS] instead of wall-clock time
     const formatTime = (seconds: number | undefined): string => {
-      if (seconds === undefined) return '[--:--]';
+      if (seconds === undefined) return '[00:00]';
       const totalSecs = Math.floor(seconds);
       const mins = Math.floor(totalSecs / 60);
       const secs = totalSecs % 60;
@@ -1035,8 +1045,8 @@ export default function Home() {
       // Optimization: Limit the number of transcripts sent to prevent payload size issues
       // 1000 transcripts is roughly 1.5 - 2 hours of meeting data
       const MAX_CATCHUP_TRANSCRIPTS = 1000;
-      const limitedTranscriptTexts = transcriptTexts.length > MAX_CATCHUP_TRANSCRIPTS 
-        ? transcriptTexts.slice(-MAX_CATCHUP_TRANSCRIPTS) 
+      const limitedTranscriptTexts = transcriptTexts.length > MAX_CATCHUP_TRANSCRIPTS
+        ? transcriptTexts.slice(-MAX_CATCHUP_TRANSCRIPTS)
         : transcriptTexts;
 
       if (transcriptTexts.length > MAX_CATCHUP_TRANSCRIPTS) {
@@ -1464,6 +1474,7 @@ export default function Home() {
                       isParentProcessing={isProcessingStop}
                       selectedDevices={selectedDevices}
                       meetingName={meetingTitle}
+                      onSessionIdReceived={setCurrentSessionId}
                     />
                   </div>
                 </div>
@@ -2031,7 +2042,7 @@ export default function Home() {
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Session Expired</h3>
             <p className="text-gray-600 mb-6">
-              Your session has expired, but your meeting transcript is safe locally. 
+              Your session has expired, but your meeting transcript is safe locally.
               Please log in again in a new tab, then click "Retry Save".
             </p>
             <div className="flex justify-end gap-3">
@@ -2043,8 +2054,8 @@ export default function Home() {
               </button>
               <button
                 onClick={async () => {
-                   setShowReauthModal(false);
-                   await handleWebAudioRecordingStop();
+                  setShowReauthModal(false);
+                  await handleWebAudioRecordingStop();
                 }}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
               >

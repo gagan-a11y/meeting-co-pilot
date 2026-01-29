@@ -11,7 +11,7 @@
 
 export interface StreamingCallbacks {
   onPartial?: (text: string, confidence: number, isStable: boolean) => void;
-  onFinal?: (text: string, confidence: number, reason: string) => void;
+  onFinal?: (text: string, confidence: number, reason: string, timing?: { start: number, end: number, duration: number }) => void;
   onError?: (error: Error, code?: string) => void;
   onConnected?: (sessionId: string) => void;
   onDisconnected?: () => void;
@@ -30,10 +30,12 @@ export class AudioStreamClient {
   // Robustness state
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
-  private audioQueue: Float32Array[] = [];
+  private audioQueue: ArrayBuffer[] = []; // Changed to ArrayBuffer for combined data
   private isReconnecting: boolean = false;
   private sessionId: string | null = null;
   private userEmail: string | null = null;
+  private recordingStartTime: number = 0; // AudioContext.currentTime at recording start
+  private heartbeatInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private wsUrlOverride: string = wsUrl
@@ -50,6 +52,7 @@ export class AudioStreamClient {
     this.audioQueue = []; // Clear queue on fresh start
     this.sessionId = null; // Clear session on fresh start
     this.userEmail = userEmail || null;
+    this.recordingStartTime = 0; // Will be set after AudioContext creation
 
     try {
       console.log('[AudioStream] Starting pipeline...');
@@ -67,7 +70,11 @@ export class AudioStreamClient {
       // 2. Setup Audio Context & Worklet
       this.audioContext = new AudioContext();
       await this.audioContext.audioWorklet.addModule('/audio-processor.worklet.js');
-      
+
+      // Track recording start time using AudioContext.currentTime (hardware-synced)
+      this.recordingStartTime = this.audioContext.currentTime;
+      console.log(`[AudioStream] Recording start time: ${this.recordingStartTime.toFixed(3)}s (AudioContext time)`);
+
       // 3. Connect WebSocket (with retry capability)
       await this.connectWithRetry();
 
@@ -81,16 +88,34 @@ export class AudioStreamClient {
 
       // 5. Handle audio data
       this.audioWorklet.port.onmessage = (event) => {
+        const audioChunk = event.data as ArrayBuffer;
+
+        // Use AudioContext.currentTime for hardware-synced timestamps
+        // This is immune to network jitter and provides sub-millisecond precision
+        if (!this.audioContext) return;
+
+        const currentTime = this.audioContext.currentTime;
+        const timestamp = currentTime - this.recordingStartTime;
+
+        // Create combined buffer: [8 bytes timestamp] + [audio data]
+        const combined = new ArrayBuffer(8 + audioChunk.byteLength);
+        const view = new DataView(combined);
+
+        // Write timestamp (Float64, Little Endian)
+        // This is the SOURCE OF TRUTH for timing - client-side, hardware-synced
+        view.setFloat64(0, timestamp, true);
+
+        // Copy audio data
+        new Int16Array(combined, 8).set(new Int16Array(audioChunk));
+
         // If connected, send immediately
         if (this.websocket?.readyState === WebSocket.OPEN) {
           this.flushQueue(); // Send any buffered data first
-          this.websocket.send(event.data);
+          this.websocket.send(combined);
         } else {
           // If disconnected, buffer the audio
-          // Note: event.data is Float32Array or similar, verify format
-          // AudioWorklet usually sends Float32Array. If we need ArrayBuffer:
-          this.audioQueue.push(event.data);
-          
+          this.audioQueue.push(combined);
+
           if (this.audioQueue.length % 50 === 0) {
             console.warn(`[AudioStream] Buffering... Queue size: ${this.audioQueue.length}`);
           }
@@ -165,6 +190,10 @@ export class AudioStreamClient {
       this.websocket.onopen = () => {
         clearTimeout(timeout);
         console.log('[AudioStream] WebSocket connected');
+        
+        // Start heartbeat
+        this.startHeartbeat();
+        
         resolve();
       };
 
@@ -178,7 +207,18 @@ export class AudioStreamClient {
             this.callbacks.onConnected?.(data.session_id);
           }
           else if (data.type === 'partial') this.callbacks.onPartial?.(data.text, data.confidence, data.is_stable);
-          else if (data.type === 'final') this.callbacks.onFinal?.(data.text, data.confidence, data.reason);
+          else if (data.type === 'final') {
+            this.callbacks.onFinal?.(
+              data.text, 
+              data.confidence, 
+              data.reason, 
+              data.audio_start_time !== undefined ? {
+                start: data.audio_start_time,
+                end: data.audio_end_time,
+                duration: data.duration
+              } : undefined
+            );
+          }
           else if (data.type === 'error') this.callbacks.onError?.(new Error(data.message), data.code);
         } catch (e) {
           console.error('Parse error', e);
@@ -208,8 +248,25 @@ export class AudioStreamClient {
   stop(): void {
     console.log('[AudioStream] Stopping...');
     this.isStreaming = false;
+    this.stopHeartbeat();
     this.cleanup();
     console.log('[AudioStream] ✅ Stopped');
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatInterval = setInterval(() => {
+      if (this.websocket?.readyState === WebSocket.OPEN) {
+        this.websocket.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 5000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
   }
 
   /**
@@ -248,5 +305,12 @@ export class AudioStreamClient {
     return this.isStreaming &&
            this.websocket?.readyState === WebSocket.OPEN &&
            this.audioContext?.state === 'running';
+  }
+
+  /**
+   * Get the current session ID
+   */
+  getSessionId(): string | null {
+    return this.sessionId;
   }
 }

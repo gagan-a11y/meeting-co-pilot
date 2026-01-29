@@ -178,3 +178,55 @@ class GroqTranscriptionClient:
                 "confidence": 0.0,
                 "error": str(e)
             }
+    async def transcribe_full_audio(
+        self,
+        audio_data: bytes,
+        language: str = "en",
+        prompt: str = None
+    ) -> dict:
+        """
+        Transcribe a large audio file and return detailed segments.
+        Used for post-meeting 'Gold Standard' recovery.
+        """
+        try:
+            # Convert PCM to WAV format
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(16000)
+                wav_file.writeframes(audio_data)
+
+            wav_buffer.seek(0)
+
+            # Use translation/transcription based on requirements
+            # For gold-standard, we prioritize English output for consistency
+            result = self.client.audio.translations.create(
+                file=("audio.wav", wav_buffer.read()),
+                model="whisper-large-v3",
+                response_format="verbose_json",
+                temperature=0.0,
+                prompt=prompt or "This is a business meeting transcript."
+            )
+
+            # Extract segments for precise alignment
+            segments = []
+            if hasattr(result, 'segments'):
+                for s in result.segments:
+                    segments.append({
+                        "text": s.get("text", "").strip(),
+                        "start": s.get("start", 0.0),
+                        "end": s.get("end", 0.0),
+                        "confidence": s.get("avg_logprob", 1.0) # Using logprob as confidence proxy
+                    })
+            
+            return {
+                "text": result.text.strip(),
+                "segments": segments,
+                "language": "en",
+                "duration": getattr(result, 'duration', 0.0)
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Groq full transcription error: {e}")
+            return {"text": "", "segments": [], "error": str(e)}
