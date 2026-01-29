@@ -2624,6 +2624,236 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
         diarization_service = get_diarization_service()
         storage_path = os.getenv("RECORDINGS_STORAGE_PATH", "./data/recordings")
 
+        # 1. Get Audio Data (Handle both Live Chunks and Imported Files)
+        recording_dir = Path(storage_path) / meeting_id
+        audio_data = None
+
+        # Check for pre-existing merged file (Imported)
+        merged_pcm = recording_dir / "merged_recording.pcm"
+        merged_wav = recording_dir / "merged_recording.wav"
+
+        if merged_pcm.exists():
+            logger.info(f"📂 Found existing merged PCM file for {meeting_id}")
+            async with aiofiles.open(merged_pcm, "rb") as f:
+                audio_data = await f.read()
+        elif merged_wav.exists():
+            logger.info(f"📂 Found existing merged WAV file for {meeting_id}")
+            async with aiofiles.open(merged_wav, "rb") as f:
+                wav_data = await f.read()
+                # Skip header for PCM if needed, but DiarizationService handles WAV usually.
+                # However, transcribe_with_whisper expects raw PCM usually?
+                # Actually transcribe_with_whisper sends to Groq which accepts WAV or PCM?
+                # Let's check Groq client. It likely takes raw bytes.
+                # But audio_recorder.merge_chunks returns raw PCM bytes.
+                # So if we have WAV, we might need to strip header or just pass it if Groq is smart.
+                # Safest: Use merged PCM if available. If WAV, maybe read it as bytes.
+                audio_data = wav_data
+        else:
+            # Fallback to merging chunks (Live Recording)
+            logger.info(f"🧩 Merging live audio chunks for {meeting_id}")
+            audio_data = await AudioRecorder.merge_chunks(meeting_id, storage_path)
+
+        if not audio_data:
+            raise ValueError(f"No audio data found for meeting {meeting_id}")
+
+        # 2. Run high-fidelity Whisper transcription (The Words)
+        whisper_segments = await diarization_service.transcribe_with_whisper(audio_data)
+        if not whisper_segments:
+            logger.warning(
+                "Whisper transcription returned no segments. Falling back to native provider text."
+            )
+
+        # 3. Run Diarization (The Speakers)
+        result = await diarization_service.diarize_meeting(
+            meeting_id=meeting_id, storage_path=storage_path, provider=provider
+        )
+
+        if result.status == "completed":
+            logger.info(
+                f"✅ Diarization success, aligning with {len(whisper_segments)} high-fidelity segments"
+            )
+
+            # 4. ALIGN: Attach speakers to Whisper's high-quality text using 3-tier alignment
+            # If whisper failed, diarization_service.align_with_transcripts handles it via fallback
+            (
+                final_segments,
+                alignment_metrics,
+            ) = await diarization_service.align_with_transcripts(
+                meeting_id,
+                result,
+                whisper_segments
+                if whisper_segments
+                else [
+                    {"start": s.start_time, "end": s.end_time, "text": s.text}
+                    for s in result.segments
+                ],
+            )
+
+            logger.info(
+                f"📊 Alignment metrics: {alignment_metrics.get('confident_count', 0)} confident, "
+                f"{alignment_metrics.get('uncertain_count', 0)} uncertain, "
+                f"{alignment_metrics.get('overlap_count', 0)} overlap"
+            )
+
+            # 5. RE-INSERT into Database (Transactional)
+            async with db._get_connection() as conn:
+                async with conn.transaction():
+                    # --- VERSIONING STRATEGY ---
+                    # 1. Check if we should archive the current "Live" transcripts before overwriting.
+                    # If this is the FIRST diarization run, we should probably save the raw live transcript as v1.
+
+                    # Fetch current segments to see if we have data to archive
+                    current_rows = await conn.fetch(
+                        "SELECT * FROM transcript_segments WHERE meeting_id = $1 ORDER BY audio_start_time",
+                        meeting_id,
+                    )
+
+                    if current_rows:
+                        # Check if we already have versions
+                        version_count = await conn.fetchval(
+                            "SELECT COUNT(*) FROM transcript_versions WHERE meeting_id = $1",
+                            meeting_id,
+                        )
+
+                        # If no versions exist, archive the current "Live/Raw" state as Version 1
+                        # OR if the user explicitly requested a snapshot (we assume implicit here for safety)
+                        if version_count == 0:
+                            logger.info(
+                                f"📦 Archiving original transcript as Version 1 for {meeting_id}"
+                            )
+
+                            # Convert rows to list of dicts
+                            current_content = [dict(row) for row in current_rows]
+
+                            # Calculate metrics for the old version
+                            confidence_metrics = db._calculate_confidence_metrics(
+                                current_content
+                            )
+
+                            await conn.execute(
+                                """
+                                INSERT INTO transcript_versions (
+                                    meeting_id, version_num, source, content_json,
+                                    is_authoritative, created_by, confidence_metrics
+                                ) VALUES ($1, 1, 'original_capture', $2, FALSE, 'system', $3)
+                                """,
+                                meeting_id,
+                                json.dumps(current_content, default=str),
+                                json.dumps(confidence_metrics),
+                            )
+
+                    # ---------------------------
+
+                    # Clear old transcripts (Replcae Live View with Diarized View)
+                    await conn.execute(
+                        "DELETE FROM transcript_segments WHERE meeting_id = $1",
+                        meeting_id,
+                    )
+
+                    # Insert Gold Standard transcripts with alignment metadata
+                    for i, t in enumerate(final_segments):
+                        start = t.get("start", t.get("audio_start_time", 0))
+                        end = t.get("end", t.get("audio_end_time", start + 2))
+                        text = t.get("text", t.get("transcript", ""))
+                        speaker = t.get("speaker", "Speaker 0")
+
+                        # Alignment metadata from new AlignmentEngine
+                        alignment_state = t.get("alignment_state", "CONFIDENT")
+                        alignment_method = t.get("alignment_method", "time_overlap")
+                        speaker_confidence = t.get("speaker_confidence", 1.0)
+
+                        # Format timestamp (MM:SS)
+                        ts = f"({int(start // 60):02d}:{int(start % 60):02d})"
+
+                        await conn.execute(
+                            """
+                            INSERT INTO transcript_segments (
+                                meeting_id, transcript, timestamp, speaker,
+                                audio_start_time, audio_end_time, duration,
+                                audio_start_time_raw, audio_end_time_raw, formatted_time,
+                                alignment_state, alignment_method, speaker_confidence,
+                                source
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        """,
+                            meeting_id,
+                            text,
+                            ts,
+                            speaker,
+                            start,
+                            end,
+                            (end - start),
+                            start,
+                            end,
+                            ts,  # Raw timestamps + formatted
+                            alignment_state,
+                            alignment_method,
+                            speaker_confidence,
+                            "diarized",  # Source is 'diarized' for post-processed transcripts
+                        )
+
+                    # Update meeting_speakers mapping
+                    unique_speakers = set(s.speaker for s in result.segments)
+                    for speaker_label in unique_speakers:
+                        await conn.execute(
+                            """
+                            INSERT INTO meeting_speakers (meeting_id, diarization_label, display_name)
+                            VALUES ($1, $2, $2)
+                            ON CONFLICT (meeting_id, diarization_label) DO NOTHING
+                        """,
+                            meeting_id,
+                            speaker_label,
+                            speaker_label,
+                        )
+
+                    # --- SAVE DIARIZED VERSION ---
+                    # Save the NEW diarized transcript as the next Version
+                    next_version = await conn.fetchval(
+                        "SELECT COALESCE(MAX(version_num), 0) + 1 FROM transcript_versions WHERE meeting_id = $1",
+                        meeting_id,
+                    )
+
+                    logger.info(f"💾 Saving Diarized result as Version {next_version}")
+
+                    # Calculate metrics
+                    new_metrics = db._calculate_confidence_metrics(final_segments)
+
+                    await conn.execute(
+                        """
+                        INSERT INTO transcript_versions (
+                            meeting_id, version_num, source, content_json,
+                            is_authoritative, created_by, alignment_config, confidence_metrics
+                        ) VALUES ($1, $2, 'diarization', $3, TRUE, $4, $5, $6)
+                        """,
+                        meeting_id,
+                        next_version,
+                        json.dumps(final_segments, default=str),
+                        user_email,
+                        json.dumps(alignment_metrics),
+                        json.dumps(new_metrics),
+                    )
+
+                    # Ensure previous versions are not authoritative
+                    await conn.execute(
+                        """
+                        UPDATE transcript_versions 
+                        SET is_authoritative = FALSE 
+                        WHERE meeting_id = $1 AND version_num != $2
+                        """,
+                        meeting_id,
+                        next_version,
+                    )
+                    # -----------------------------
+
+                    # Update full_transcripts for AI Note generation
+                    formatted_text = (
+                        diarization_service.format_transcript_with_speakers(
+                            final_segments
+                        )
+                    )
+
+        diarization_service = get_diarization_service()
+        storage_path = os.getenv("RECORDINGS_STORAGE_PATH", "./data/recordings")
+
         # 1. Merge audio chunks
         audio_data = await AudioRecorder.merge_chunks(meeting_id, storage_path)
         if not audio_data:
