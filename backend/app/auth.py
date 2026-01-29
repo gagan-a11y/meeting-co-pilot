@@ -1,5 +1,7 @@
 import os
 import httpx
+import time
+import asyncio
 from fastapi import HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
@@ -19,25 +21,62 @@ GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 
 security = HTTPBearer()
 
+# Cache for Google Public Keys
+_google_keys_cache = None
+_google_keys_expiry = 0
+CACHE_TTL = 3600  # 1 hour
+
+
 class User(BaseModel):
     email: str
     name: Optional[str] = None
     picture: Optional[str] = None
     # We can add efficient role/org checking here later
-    # role: str = "user" 
+    # role: str = "user"
+
 
 async def get_google_public_keys() -> Dict[str, Any]:
-    """Fetch Google's public keys for verifying JWTs"""
+    """Fetch Google's public keys for verifying JWTs (Cached with Retry)"""
+    global _google_keys_cache, _google_keys_expiry
+
+    current_time = time.time()
+    if _google_keys_cache and current_time < _google_keys_expiry:
+        return _google_keys_cache
+
     async with httpx.AsyncClient() as client:
-        response = await client.get(GOOGLE_CERTS_URL)
-        return response.json()
+        # Simple retry logic (3 attempts)
+        for attempt in range(3):
+            try:
+                response = await client.get(GOOGLE_CERTS_URL, timeout=10.0)
+                response.raise_for_status()
+                keys = response.json()
+
+                # Update cache
+                _google_keys_cache = keys
+                _google_keys_expiry = current_time + CACHE_TTL
+                logger.info("DEBUG AUTH: Refreshed Google public keys cache")
+                return keys
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch Google keys (attempt {attempt + 1}/3): {e}"
+                )
+                if attempt == 2:
+                    # If we have stale cache, use it as fallback rather than failing
+                    if _google_keys_cache:
+                        logger.warning("Using stale cache due to fetch failure")
+                        return _google_keys_cache
+                    raise e
+                await asyncio.sleep(1)  # Wait before retry
+
+    return {}  # Should not be reached
+
 
 async def verify_google_token(token: str) -> Dict[str, Any]:
     """Verify the Google JWT token"""
     try:
         # Get public keys
         jwks = await get_google_public_keys()
-        
+
         # Verify and decode
         # Note: audience check is crucial
         # DEBUG: Temporarily disable strict audience check to debug mismatch
@@ -45,61 +84,62 @@ async def verify_google_token(token: str) -> Dict[str, Any]:
             token,
             jwks,
             algorithms=["RS256"],
-            audience=None, # GOOGLE_CLIENT_ID,
+            audience=None,  # GOOGLE_CLIENT_ID,
             options={
                 "verify_at_hash": False,
-                "verify_aud": False # Explicitly disable audience verification
-            }
+                "verify_aud": False,  # Explicitly disable audience verification
+            },
         )
-        
+
         token_aud = payload.get("aud")
         print(f"DEBUG AUTH: Token aud: '{token_aud}'", flush=True)
         print(f"DEBUG AUTH: Server GOOGLE_CLIENT_ID: '{GOOGLE_CLIENT_ID}'", flush=True)
-        
+
         if str(token_aud) != str(GOOGLE_CLIENT_ID):
-             print("DEBUG AUTH: Audience Mismatch! Continuing for debug...", flush=True)
-             # raise HTTPException(status_code=401, detail=f"Audience mismatch: {token_aud} vs {GOOGLE_CLIENT_ID}")
-             
+            print("DEBUG AUTH: Audience Mismatch! Continuing for debug...", flush=True)
+            # raise HTTPException(status_code=401, detail=f"Audience mismatch: {token_aud} vs {GOOGLE_CLIENT_ID}")
+
         return payload
     except JWTError as e:
         error_msg = str(e)
         logger.error(f"JWT Verification Error: {error_msg}")
-        
+
         # provide more descriptive detail for common errors
         detail = "Invalid authentication credentials"
         if "exp" in error_msg.lower() or "expired" in error_msg.lower():
             detail = "Token expired. Please refresh your session."
         elif "aud" in error_msg.lower() or "audience" in error_msg.lower():
             detail = "Token audience mismatch. Check GOOGLE_CLIENT_ID."
-            
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> User:
     """
     Dependency to get the current authenticated user.
     Validates JWT token from Authorization header.
     """
     token = credentials.credentials
-    
+
     if not GOOGLE_CLIENT_ID:
         logger.warning("DEBUG AUTH: GOOGLE_CLIENT_ID is None")
         # Don't fail here, verify_google_token will fail with a better error if needed
-    
+
     try:
         payload = await verify_google_token(token)
         logger.info(f"DEBUG AUTH: Payload extracted for {payload.get('email')}")
     except HTTPException as e:
-         # Re-raise HTTPExceptions as-is to preserve details
-         raise e
+        # Re-raise HTTPExceptions as-is to preserve details
+        raise e
     except Exception as e:
-         logger.error(f"DEBUG AUTH: Unexpected verification error: {str(e)}")
-         raise HTTPException(
+        logger.error(f"DEBUG AUTH: Unexpected verification error: {str(e)}")
+        raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Could not validate credentials: {str(e)}",
         )
@@ -112,11 +152,7 @@ async def get_current_user(
     if not email.endswith("@appointy.com"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Access restricted to @appointy.com users (found {email})"
+            detail=f"Access restricted to @appointy.com users (found {email})",
         )
 
-    return User(
-        email=email,
-        name=payload.get("name"),
-        picture=payload.get("picture")
-    )
+    return User(email=email, name=payload.get("name"), picture=payload.get("picture"))
