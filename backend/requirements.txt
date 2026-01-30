@@ -27,3 +27,4 @@ torchaudio
 ten-vad
 asyncpg==0.29.0
 psycopg2-binary==2.9.9
+google-cloud-storage>=2.14.0

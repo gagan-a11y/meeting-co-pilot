@@ -4,6 +4,7 @@ import { Transcript } from '@/types';
 import { TranscriptView } from '@/components/TranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
 import { TranscriptVersionSelector } from './TranscriptVersionSelector';
+import { AudioPlayer } from './AudioPlayer';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { authFetch } from '@/lib/api';
@@ -77,6 +78,7 @@ export function TranscriptPanel({
 
   return (
     <div className="hidden md:flex md:w-1/4 lg:w-1/3 min-w-0 border-r border-gray-200 bg-white flex-col relative shrink-0">
+      {meetingId && <AudioPlayer meetingId={meetingId} />}
       {/* Title area */}
       <div className="p-4 border-b border-gray-200">
         {meetingId && onTranscriptsUpdate && (

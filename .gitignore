@@ -54,7 +54,10 @@ docs/demo.gif
 
 meeting_minutes.db
 
-# Added by Task Master AI
+# Google Cloud Service Account Key
+backend/gcp-service-account.json
+gcp-service-account.json
+
 # Logs
 logs
 *.log
