@@ -1213,6 +1213,19 @@ export default function Home() {
     loadLanguagePreference();
   }, []);
 
+  const handleDiscardRecovery = async () => {
+    if (confirm('Are you sure you want to discard this recovered meeting? This cannot be undone.')) {
+      if (pendingRecoveryId) {
+        await recoveryService.deletePendingTranscript(pendingRecoveryId);
+        setPendingRecoveryId(null);
+      }
+      setTranscripts([]);
+      setMeetingTitle('+ New Call');
+      setCurrentMeeting(null);
+      toast.info('Recovered meeting discarded');
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -1449,7 +1462,7 @@ export default function Home() {
           )} */}
 
           {/* Recording controls - only show when permissions are granted or already recording and not showing status messages */}
-          {(!isProcessingStop && !isSavingTranscript) && (
+          {(!isProcessingStop && !isSavingTranscript && !pendingRecoveryId) && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
                 className="flex justify-center pl-8 transition-[margin] duration-300"
@@ -1477,6 +1490,41 @@ export default function Home() {
                       onSessionIdReceived={setCurrentSessionId}
                     />
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recovery Mode Actions */}
+          {pendingRecoveryId && !isSavingTranscript && (
+            <div className="fixed bottom-12 left-0 right-0 z-10">
+              <div
+                className="flex justify-center pl-8 transition-[margin] duration-300"
+                style={{
+                  marginLeft: sidebarCollapsed ? '4rem' : '16rem'
+                }}
+              >
+                <div className="bg-amber-50 border border-amber-200 rounded-full shadow-lg px-6 py-3 flex items-center gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold text-amber-800">Recovery Mode</span>
+                    <span className="text-xs text-amber-600 max-w-[200px] truncate" title={meetingTitle}>
+                      {meetingTitle}
+                    </span>
+                  </div>
+                  <div className="h-8 w-px bg-amber-200 mx-2"></div>
+                  <Button
+                    onClick={() => handleWebAudioRecordingStop()}
+                    className="bg-green-600 hover:bg-green-700 text-white rounded-full px-6"
+                  >
+                    Save Meeting
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleDiscardRecovery}
+                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 rounded-full px-4"
+                  >
+                    Discard
+                  </Button>
                 </div>
               </div>
             </div>
