@@ -43,6 +43,7 @@ from audio_recorder import (
     stop_recorder,
     active_recorders,
 )
+from storage import StorageService
 from diarization import DiarizationService, get_diarization_service, DiarizationResult
 from file_processing import get_file_processor
 
@@ -2529,13 +2530,16 @@ async def get_meeting_recording_url(
 
     try:
         # Check if meeting has audio
-        # Ideally check DB flag, but let's check Storage directly for now
-        url = await StorageService.generate_signed_url(f"{meeting_id}/recording.wav")
+        recording_path = f"{meeting_id}/recording.wav"
+
+        # Verify file exists before generating URL
+        if not await StorageService.check_file_exists(recording_path):
+            raise HTTPException(status_code=404, detail="Recording not found")
+
+        url = await StorageService.generate_signed_url(recording_path)
 
         if not url:
-            # Try merged_recording.wav locally?
-            # StorageService.generate_signed_url already handles local logic if STORAGE_TYPE=local
-            raise HTTPException(status_code=404, detail="Recording not found")
+            raise HTTPException(status_code=404, detail="Failed to generate URL")
 
         return {"url": url, "expiration": 3600}
     except HTTPException:

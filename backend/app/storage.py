@@ -126,7 +126,37 @@ class StorageService:
             # path is like 'meeting-123/recording.wav'
             return f"/audio/{path}"
 
+    @staticmethod
+    async def check_file_exists(path: str) -> bool:
+        """Check if file exists in storage."""
+        if STORAGE_TYPE == "gcp":
+            return await StorageService._check_gcp_exists(path)
+        else:
+            return await StorageService._check_local_exists(path)
+
     # --- Internal Implementations ---
+
+    @staticmethod
+    async def _check_gcp_exists(blob_name: str) -> bool:
+        try:
+            bucket = get_gcp_bucket()
+            if not bucket:
+                return False
+
+            blob = bucket.blob(blob_name)
+
+            import asyncio
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, blob.exists)
+        except Exception as e:
+            logger.error(f"GCS Exists check failed: {e}")
+            return False
+
+    @staticmethod
+    async def _check_local_exists(relative_path: str) -> bool:
+        base_path = Path("./data/recordings")
+        return (base_path / relative_path).exists()
 
     @staticmethod
     async def _upload_to_gcp(local_path: str, blob_name: str) -> bool:
