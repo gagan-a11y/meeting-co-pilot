@@ -51,8 +51,6 @@ export default function PageContent({
   // Sidebar context
   const { serverAddress } = useSidebar();
 
-import { toast } from 'sonner';
-
 // Custom hooks
   const meetingData = useMeetingData({ meeting, summaryData, onMeetingUpdated });
   const modelConfig = useModelConfiguration({ serverAddress });
