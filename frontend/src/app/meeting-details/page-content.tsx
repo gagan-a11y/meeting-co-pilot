@@ -8,6 +8,7 @@ import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
 import { ChatInterface } from '@/components/MeetingDetails/ChatInterface';
 import { Bot, MessageSquare } from 'lucide-react';
+import { toast } from 'sonner';
 
 // Custom hooks
 import { useMeetingData } from '@/hooks/meeting-details/useMeetingData';
@@ -50,7 +51,9 @@ export default function PageContent({
   // Sidebar context
   const { serverAddress } = useSidebar();
 
-  // Custom hooks
+import { toast } from 'sonner';
+
+// Custom hooks
   const meetingData = useMeetingData({ meeting, summaryData, onMeetingUpdated });
   const modelConfig = useModelConfiguration({ serverAddress });
   const templates = useTemplates();
@@ -80,6 +83,25 @@ export default function PageContent({
 
   // Diarization
   const diarization = useDiarization(meeting.id);
+
+  // Handle diarization errors
+  useEffect(() => {
+    if (diarization.error) {
+      console.error('Diarization error:', diarization.error);
+      
+      // Check for specific "No audio" error
+      if (diarization.error.includes('No audio recording directory found') || diarization.error.includes('No audio recording found')) {
+        toast.error('Diarization Failed', {
+          description: 'No audio recording found for this meeting. Diarization requires the original audio file.',
+          duration: 5000
+        });
+      } else {
+        toast.error('Diarization Failed', {
+          description: diarization.error
+        });
+      }
+    }
+  }, [diarization.error]);
 
   // Track page view
   useEffect(() => {
