@@ -14,16 +14,28 @@ export function useMeetingOperations({
   const { serverAddress } = useSidebar();
   const baseUrl = serverAddress || apiUrl;
 
-  // Open meeting folder in file explorer
-  const handleOpenMeetingFolder = useCallback(async () => {
+  // Download recording
+  const handleDownloadRecording = useCallback(async () => {
     try {
-      // Web app cannot access local file system directly to open folders
-      toast.info('Feature not available in web version', {
-        description: 'Opening local folders is not supported in the browser.'
-      });
+      const response = await authFetch(`/meetings/${meeting.id}/recording-url`);
+      if (!response.ok) {
+        throw new Error('No recording available');
+      }
+      
+      const data = await response.json();
+      if (data.url) {
+        // Trigger download
+        const link = document.createElement('a');
+        link.href = data.url;
+        link.download = `recording-${meeting.id}.wav`; // Suggest filename (browser might ignore for signed URLs)
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
     } catch (error) {
-      console.error('Failed to open meeting folder:', error);
-      toast.error(error as string || 'Failed to open recording folder');
+      console.error('Failed to download recording:', error);
+      toast.error('Failed to download recording');
     }
   }, [meeting.id]);
 
@@ -58,7 +70,7 @@ export function useMeetingOperations({
   }, [meeting.id, baseUrl]);
 
   return {
-    handleOpenMeetingFolder,
+    handleDownloadRecording,
     handleDeleteMeeting,
   };
 }

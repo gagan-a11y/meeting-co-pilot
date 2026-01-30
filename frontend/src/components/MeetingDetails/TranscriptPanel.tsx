@@ -13,7 +13,7 @@ import { Loader2 } from 'lucide-react';
 interface TranscriptPanelProps {
   transcripts: Transcript[];
   onCopyTranscript: () => void;
-  onOpenMeetingFolder: () => Promise<void>;
+  onDownloadRecording: () => Promise<void>;
   isRecording: boolean;
   onDiarize?: () => void;
   diarizationStatus?: string;
@@ -26,7 +26,7 @@ interface TranscriptPanelProps {
 export function TranscriptPanel({
   transcripts,
   onCopyTranscript,
-  onOpenMeetingFolder,
+  onDownloadRecording,
   isRecording,
   onDiarize,
   diarizationStatus,
@@ -112,7 +112,7 @@ export function TranscriptPanel({
         <TranscriptButtonGroup
           transcriptCount={transcripts?.length || 0}
           onCopyTranscript={onCopyTranscript}
-          onOpenMeetingFolder={onOpenMeetingFolder}
+          onDownloadRecording={onDownloadRecording}
           onDiarize={onDiarize}
           diarizationStatus={diarizationStatus}
           isDiarizing={isDiarizing}

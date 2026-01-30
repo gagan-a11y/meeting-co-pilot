@@ -200,7 +200,7 @@ export default function PageContent({
         <TranscriptPanel
           transcripts={meetingData.transcripts}
           onCopyTranscript={copyOperations.handleCopyTranscript}
-          onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
+          onDownloadRecording={meetingOperations.handleDownloadRecording}
           isRecording={isRecording}
           onDiarize={diarization.triggerDiarization}
           diarizationStatus={diarization.status?.status}
