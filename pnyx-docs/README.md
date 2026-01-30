@@ -8,54 +8,44 @@
 
 ## 📚 Documentation Index
 
-### Core Documents
-- **[PRD.md](PRD.md)** - Product Requirements Document
-  - Complete feature specifications
-  - Architecture decisions (Web vs Desktop)
-  - User flows with diagrams
-  - Implementation timeline with dates (estimates only)
+### 1. Roadmap & Phases (`/roadmap`)
+Development timeline, implementation plans, and status reports.
 
-- **[PROGRESS_REPORT.md](PROGRESS_REPORT.md)** - Progress Report ⭐ **NEW**
-  - Phase-by-phase progress tracking
-  - Completed tasks and deliverables
-  - Key findings and insights
-  - Upcoming milestones and next steps
+*   **[Phase 1](./roadmap/PHASE_1.md)** - Web Audio Foundation
+*   **[Phase 3](./roadmap/PHASE_3.md)** - AI Features
+*   **[Phase 4](./roadmap/PHASE_4.md)** - Cross-Meeting Context
+*   **[Phase 5](./roadmap/PHASE_5.md)** - Post-Meeting & Polish
+    *   **[Implementation Plan](./roadmap/PHASE_5_IMPLEMENTATION.md)** - Detailed Stabilization Plan
+    *   **[Stabilization](./roadmap/STABILIZATION_PLAN.md)** - Stabilization Strategy
+*   **[Phase 6](./roadmap/PHASE_6.md)** - Import Recording (Completed)
+*   **[Phase 7](./roadmap/PHASE_7.md)** - Context-Aware Chatbot (In Progress)
+*   **[Phase 8](./roadmap/PHASE_8.md)** - Polish & Production (Planned)
+*   **[Future Optimizations](./roadmap/FUTURE_OPTIMIZATIONS.md)**
 
-- **[TECH_STACK.md](TECH_STACK.md)** - Technology Stack Guide
-  - Detailed explanation of all tools and technologies
-  - Why each technology is used
-  - Complete stack visualization
-  - Learning resources
+### 2. Architecture & Design (`/architecture`)
+High-level system design, choices, and core concepts.
 
-### Implementation Plans
-- **[PHASE_1_PLAN.md](PHASE_1_PLAN.md)** - Web Audio Foundation (5-7 days)
-  - Remove desktop dependencies (Tauri/Rust)
-  - Implement browser-based audio capture
-  - Real-time transcription via WebSocket
-  - **Target**: Single-user web recording working
+*   **[PRD](./architecture/PRD.md)** - Product Requirements Document
+*   **[Context-Aware Chatbot](./architecture/CONTEXT_AWARE_CHATBOT_WITH_SEARCH.md)** - RAG & Search Architecture
+*   **[Chat Memory](./architecture/CHAT_MEMORY_ARCHITECTURE.md)** - Complete storage and memory system
+*   **[Context Flow](./architecture/CONTEXT_FLOW_EXPLAINED.md)** - How meeting context search works
+*   **[Database Choice](./architecture/DATABASE_CHOICE.md)** - Why SQLite/Postgres/Neon?
+*   **[Architecture Deviation Log](./architecture/ARCHITECTURE_DEVIATION_LOG.md)** - Record of changes from original plan
 
-- **PHASE_2_PLAN.md** *(Coming Soon)* - Multi-User Sessions (3-4 days)
-  - Session management (create, join, leave)
-  - WebSocket rooms for real-time sync
-  - Participant list and presence
-  - **Target**: Multiple participants in same meeting
+### 3. Feature Specifications (`/features`)
+Detailed technical specifications for specific features.
 
-- **PHASE_3_PLAN.md** *(Coming Soon)* - AI Features (4-5 days)
-  - Real-time decision/action extraction
-  - "Catch me up" summaries
-  - Live Q&A with AI
-  - **Target**: Smart meeting assistance
-
-- **PHASE_4_PLAN.md** *(Coming Soon)* - Cross-Meeting Context (3-4 days)
-  - VectorDB integration (ChromaDB)
-  - Meeting linking and search
-  - **Target**: Full PRD features
-
-### Project Context
-- **[/CLAUDE.md](../../CLAUDE.md)** - Main development guide
-  - Phase 0 discovery findings
-  - Current vs target architecture
-  - Development environment setup
+*   **[Auth & RBAC](./features/AUTH_AND_RBAC.md)** - Authentication & Role-Based Access Control
+*   **[RBAC Spec](./features/RBAC_SPEC.md)** - Permissions specification
+*   **[Diarization](./features/DIARIZATION_PLAN.md)** - Speaker identification strategy
+*   **[VAD Integration](./features/TEN_VAD_INTEGRATION_PLAN.md)** - Voice Activity Detection
+*   **[Meeting Notes](./features/MEETING_NOTES_GENERATION.md)** - AI Note Generation
+*   **[Catch Me Up](./features/CATCH_ME_UP.md)** - Real-time summaries
+*   **[Chat Interface](./features/CHAT_BASED_NOTE_INTERFACE.md)** - Dynamic AI refinement of notes
+*   **[Cross-Meeting Search](./features/CROSS_MEETING_SEARCH.md)** - Vector search deep dive
+*   **[Ask AI Context](./features/ASK_AI_CONTEXT.md)** - Linked vs Global context
+*   **[API Keys](./features/USER_PROVIDED_API_KEYS.md)** - User-provided keys (BYOK)
+*   **[Vector DB Disablement](./features/VECTOR_DB_DISABLEMENT.md)** - Notes on temporary disablement (Jan 2026)
 
 ---
 
@@ -63,18 +53,14 @@
 
 ```
 meeting-co-pilot/
-├── docs/
-│   ├── meeting-copilot/              # Meeting Co-Pilot docs (THIS)
-│   │   ├── README.md
-│   │   ├── PHASE_1_PLAN.md
-│   │   └── [Future phase plans]
-│   │
-│   └── [meetily-original/]           # Original Meetily docs (reference)
+├── pnyx-docs/                   # Documentation Root
+│   ├── roadmap/                 # Phased Implementation Plans
+│   ├── architecture/            # Design & System Specs
+│   └── features/                # Individual Feature Specs
 │
-├── CLAUDE.md                          # Main dev guide
-├── backend/                           # FastAPI backend
-├── frontend/                          # Next.js frontend
-└── ...
+├── CLAUDE.md                    # Main AI Agent Guide
+├── backend/                     # FastAPI backend
+└── frontend/                    # Next.js frontend
 ```
 
 ---
@@ -90,7 +76,7 @@ A **web-based collaborative meeting assistant** for office teams:
    - Works with room mics or laptops
 
 2. **AI-Powered Features**
-   - Live transcription (Whisper.cpp)
+   - Live transcription (Whisper Large v3 via Groq)
    - Auto action item extraction
    - "Catch me up" for late joiners
    - Q&A with meeting context
@@ -102,127 +88,5 @@ A **web-based collaborative meeting assistant** for office teams:
 
 ---
 
-## 📅 Development Timeline
-
-**Current Status**: Phase 0 Complete ✅
-
-| Phase | Duration | Dates | Status | Deliverable |
-|-------|----------|-------|--------|-------------|
-| **Phase 0: Discovery** | 2-3 days | Dec 22-24 | ✅ Done | Plans ready |
-| **Phase 1: Web Audio** | 5-7 days | Jan 2-10 | 🔜 Next | Web recording |
-| **Phase 2: Multi-User** | 3-4 days | Jan 13-17 | 📋 Plan | Shared sessions |
-| **Phase 3: AI Features** | 4-5 days | Jan 20-24 | 📋 Plan | Smart assist |
-| **Phase 4: Context** | 3-4 days | Jan 27-31 | 📋 Plan | Full features |
-
-**Demo-Ready**: January 24, 2025
-
----
-
-## 🚀 Quick Start
-
-### Backend
-```bash
-cd backend
-./run-docker.sh
-# Backend: http://localhost:5167
-# Whisper: http://localhost:8178
-```
-
-### Frontend
-```bash
-cd frontend
-pnpm install
-pnpm run dev
-# Frontend: http://localhost:3118
-```
-
----
-
-## 🏗️ Technology Stack
-
-| Component | Technology | Why? |
-|-----------|-----------|------|
-| Frontend | Next.js 14, React 18 | Modern web, great DX |
-| Backend | FastAPI, Python | Fast async, ML ready |
-| Database | SQLite | Simple, local |
-| Transcription | Whisper.cpp | Fast, GPU, local |
-| LLM | Ollama OR Claude | User choice |
-| VectorDB | ChromaDB *(Phase 4)* | Embeddings search |
-| Real-Time | WebSocket | Browser ↔ backend |
-
----
-
-## 📊 Success Criteria
-
-### Phase 1 Success
-- ✅ Browser recording (Chrome, Firefox, Edge)
-- ✅ Real-time transcription (< 3s)
-- ✅ No desktop dependencies
-- ✅ Stable 10+ min sessions
-
-### Project Success
-- ✅ 5+ team members using regularly
-- ✅ AI features demonstrably useful
-- ✅ < 3s average latency
-- ✅ 95%+ uptime during office hours
-
----
-
-## 🔗 Key Resources
-
-### Documentation
-- [CLAUDE.md](../../CLAUDE.md) - Dev guide
-- [PHASE_1_PLAN.md](PHASE_1_PLAN.md) - Current phase
-- [Original Meetily Docs](../) - Reference
-
-### External
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [Next.js](https://nextjs.org/docs)
-- [Whisper.cpp](https://github.com/ggergan/whisper.cpp)
-
----
-
-## 📚 Documentation Index
-
-### Phase Documentation
-- [Phase 1 Plan](./PHASE_1_PLAN.md) - Foundation & Basic Recording
-- [Phase 2 Plan](./PHASE_2_PLAN.md) - AI Integration & Summaries  
-- [Phase 3 Plan](./PHASE_3_PLAN.md) - Advanced AI Features (Current)
-- [Phase 4 Plan](./PHASE_4_PLAN.md) - Production Hardening
-
-### Architecture & Technical Guides
-- [Chat Memory Architecture](./CHAT_MEMORY_ARCHITECTURE.md) - Complete storage and memory system (A to Z)
-- [Context Flow Explained](./CONTEXT_FLOW_EXPLAINED.md) - How meeting context search works
-- [Cross-Meeting Search](./CROSS_MEETING_SEARCH.md) - Vector search technical deep dive
-
-### Feature Guides
-- [Authentication](./AUTH_AND_RBAC.md) - Google OAuth implementation
-- [Permissions & RBAC](./RBAC_SPEC.md) - Workspaces and Meeting roles specification
-- [Catch Me Up](./CATCH_ME_UP.md) - Real-time meeting summaries for late joiners
-- [Ask AI with Context](./ASK_AI_CONTEXT.md) - Linked vs Global context search
-- [Chat-Based Note Interface](./CHAT_BASED_NOTE_INTERFACE.md) - Dynamic AI refinement of notes ⭐ **NEW**
-- [User-Provided API Keys](./USER_PROVIDED_API_KEYS.md) - Personal keys for Grok and other providers ⭐ **NEW**
-- [Progress Report](./PROGRESS_REPORT.md) - Development milestones and achievements
-
----
-
-## 📝 Conventions
-
-### Status Tags
-- ✅ Complete
-- 🔜 Next / In progress
-- 📋 Planned
-- ⚠️ Blocked
-- ❌ Cancelled
-
-### File Naming
-- `PHASE_N_PLAN.md` - Implementation plans
-- `PHASE_N_RETROSPECTIVE.md` - Learnings
-- `ARCHITECTURE_*.md` - Decisions
-- `API_*.md` - API docs
-
----
-
-**Last Updated**: Dec 24, 2025 (Phase 0 Complete)
-**Next Update**: Jan 2, 2025 (Phase 1 Start)
-**Version**: 0.1.0-alpha
+**Version**: 0.2.0-beta
+**Last Updated**: Jan 30, 2026

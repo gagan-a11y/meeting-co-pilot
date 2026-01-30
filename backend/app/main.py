@@ -571,24 +571,25 @@ async def process_transcript_background(
             )
 
         # Store embeddings for cross-meeting search
-        try:
-            from vector_store import store_meeting_embeddings
-
-            # Use chunks from the transcript text
-            transcript_dicts = [
-                {"text": transcript.text, "timestamp": datetime.now().isoformat()}
-            ]
-            chunks_stored = await store_meeting_embeddings(
-                meeting_id=transcript.meeting_id,
-                meeting_title=final_summary.get("MeetingName") or "Uploaded Transcript",
-                meeting_date=datetime.now().isoformat(),
-                transcripts=transcript_dicts,
-            )
-            logger.info(
-                f"✅ Stored {chunks_stored} embedding chunks for cross-meeting search"
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to store embeddings (non-critical): {e}")
+        # NOTE: Vector DB usage temporarily disabled (Jan 30, 2026)
+        # try:
+        #     from vector_store import store_meeting_embeddings
+        #
+        #     # Use chunks from the transcript text
+        #     transcript_dicts = [
+        #         {"text": transcript.text, "timestamp": datetime.now().isoformat()}
+        #     ]
+        #     chunks_stored = await store_meeting_embeddings(
+        #         meeting_id=transcript.meeting_id,
+        #         meeting_title=final_summary.get("MeetingName") or "Uploaded Transcript",
+        #         meeting_date=datetime.now().isoformat(),
+        #         transcripts=transcript_dicts,
+        #     )
+        #     logger.info(
+        #         f"✅ Stored {chunks_stored} embedding chunks for cross-meeting search"
+        #     )
+        # except Exception as e:
+        #     logger.warning(f"⚠️ Failed to store embeddings (non-critical): {e}")
 
         # Save final result
         if all_json_data:
@@ -1221,28 +1222,35 @@ async def search_context_endpoint(request: SearchContextRequest):
     Returns matching chunks with source citations.
     """
     try:
-        from vector_store import search_context, get_collection_stats
+        # NOTE: Vector DB usage temporarily disabled (Jan 30, 2026)
+        # Use SQL search (db.search_transcripts) or return empty if vector search is strictly required
 
-        # Check if vector store is available
-        stats = get_collection_stats()
-        if stats.get("status") != "available":
-            return JSONResponse(
-                status_code=503,
-                content={"error": "Vector store not available", "results": []},
-            )
+        # from vector_store import search_context, get_collection_stats
 
-        # Perform search
-        results = await search_context(
-            query=request.query,
-            n_results=request.n_results,
-            allowed_meeting_ids=request.allowed_meeting_ids,
-        )
+        # # Check if vector store is available
+        # stats = get_collection_stats()
+        # if stats.get("status") != "available":
+        #     return JSONResponse(
+        #         status_code=503,
+        #         content={"error": "Vector store not available", "results": []},
+        #     )
+
+        # # Perform search
+        # results = await search_context(
+        #     query=request.query,
+        #     n_results=request.n_results,
+        #     allowed_meeting_ids=request.allowed_meeting_ids,
+        # )
+
+        # Fallback to empty results for now
+        results = []
+        # Optional: could call await db.search_transcripts(request.query) if we wanted text fallback
 
         return {
             "status": "success",
             "query": request.query,
             "results": results,
-            "total_indexed": stats.get("count", 0),
+            "total_indexed": 0,  # stats.get("count", 0),
         }
 
     except Exception as e:

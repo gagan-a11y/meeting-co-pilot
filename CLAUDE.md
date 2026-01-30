@@ -6,7 +6,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **This project is transitioning from Meetily (Tauri desktop app) to Meeting Co-Pilot (web-based collaborative meeting assistant).**
 
-**Current Status**: **Phase 6 In Progress** - Import Recording Feature (Jan 29, 2026)
+**Current Status**: **Phase 7 Completed** - Context-Aware Chatbot (Jan 30, 2026)
 
 ---
 
@@ -248,69 +248,26 @@ pnpm run dev        # ✅ Use this - runs Next.js at http://localhost:3118
 - Audio recording won't work (needs browser API implementation)
 - UI will load but some features are non-functional
 
-## Implementation Plan (3-4 Weeks)
+## Implementation Plan (Revised Jan 30, 2026)
 
-### Phase 0: Discovery & Setup ⏳ (Current Phase)
-**Duration**: 2-3 days
+### Phase 6: Import Recording ✅ (COMPLETED)
+- [x] `POST /upload-meeting-recording` endpoint
+- [x] FFmpeg file conversion & validation
+- [x] Background processing pipeline (Transcribe -> Diarize -> Summarize)
+- [x] Frontend Import UI & Progress tracking
 
-**Tasks**:
-- [ ] Explore Meetily codebase
-- [ ] Identify Tauri-specific code to remove
-- [ ] Test backend independently (✅ Done - running)
-- [ ] Validate Whisper + Ollama work
-- [ ] Create detailed migration plan
-- [ ] Update this CLAUDE.md with findings
+### Phase 7: Context-Aware Chatbot ✅ (COMPLETED)
+**Goal**: Intelligent RAG system with Web Search capabilities.
+- [x] **Context Router**: Logic to route queries to Live, History, or Web.
+- [x] **Web Search**: Integration with Tavily/Google for external fact-checking.
+- [x] **Debate Detection**: Auto-trigger search when participants disagree.
+- [x] **Hybrid Retrieval**: Combine internal vector search with web results.
 
-**Key Files to Review**:
-- `frontend/src-tauri/` - All Rust code (will be removed)
-- `frontend/src/app/page.tsx` - Main UI (needs Tauri→Web migration)
-- `frontend/src/hooks/` - React hooks (some use Tauri APIs)
-- `backend/app/main.py` - Backend API (keep mostly as-is)
-
-### Phase 1: Core Web App (4-5 days)
-- Remove Tauri shell from frontend
-- Implement browser audio capture (getUserMedia)
-- Stream audio to backend via WebSocket
-- Display live transcript
-
-### Phase 2: Multi-Participant Sessions (3-4 days)
-- Session management (create, join, leave)
-- WebSocket rooms for real-time sync
-- Participant list and presence
-
-### Phase 3: AI Features (✅ Partially Complete)
-- [x] Real-time decision/action extraction (via summarization)
-- [x] "Catch me up" feature (via Chat Interface)
-- [x] Real-time Q&A with AI (ChatInterface implemented)
-- [ ] Current topic identification
-
-### Phase 4: Cross-Meeting Context (⚠️ In Progress)
-- [x] VectorDB setup (PGVector/Neon)
-- [x] Embedding storage for transcripts
-- [ ] Meeting linking
-- [ ] Continuity recaps
-
-### Phase 5: Post-Meeting & Polish (✅ Complete)
-- [x] Summary generation (LLM integrated)
-- [x] Transcript Versioning (Live vs Diarized)
-- [x] Speaker Diarization (Deepgram/AssemblyAI)
-- [ ] Export (Markdown/PDF) - Moved to Phase 7
-- [ ] Meeting history & search - Moved to Phase 7
-
-### Phase 6: Import Recording (📋 In Progress)
-**Goal**: Allow users to upload existing audio/video files to generate transcripts and notes.
-
-**Workflow**:
-1. User uploads file (mp3/wav/m4a/mp4)
-2. Backend converts to standardized WAV
-3. Process via existing pipeline (Whisper -> Diarization -> Summary)
-4. Create new meeting entry with imported data
-
-**Technical Approach**:
-- New Endpoint: `POST /upload-meeting-recording`
-- FFmpeg for file conversion
-- Background processing task
-- Polling/WebSocket for progress status
+### Phase 8: Polish & Production 🚀 (IN PROGRESS)
+- [ ] **Cloud Storage**: Migrate local uploads to GCP Buckets.
+- [ ] **Production Deployment**: Docker/Cloud Run setup.
+- [ ] **UX Polish**: Linking visualization, Confidence UI, Export features.
+- [ ] **Security**: Finalize RBAC and API security.
 
 ## Architecture Diagrams
 
