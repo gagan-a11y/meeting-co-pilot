@@ -7,6 +7,7 @@ import { TranscriptVersionSelector } from './TranscriptVersionSelector';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { authFetch } from '@/lib/api';
+import { Loader2 } from 'lucide-react';
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
@@ -34,10 +35,12 @@ export function TranscriptPanel({
   onTranscriptsUpdate
 }: TranscriptPanelProps) {
   const [currentVersion, setCurrentVersion] = useState<number | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleVersionChange = async (versionNum: number) => {
     if (!meetingId || !onTranscriptsUpdate) return;
 
+    setIsLoading(true);
     try {
       // Handle switching to Live Transcript
       if (versionNum === -1) {
@@ -67,6 +70,8 @@ export function TranscriptPanel({
     } catch (error) {
       console.error('Error switching version:', error);
       toast.error('Failed to load transcript version');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -115,6 +120,11 @@ export function TranscriptPanel({
 
       {/* Transcript content */}
       <div className="flex-1 overflow-y-auto pb-4 relative">
+        {isLoading ? (
+          <div className="absolute inset-0 bg-white/80 z-10 flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          </div>
+        ) : null}
         <TranscriptView 
           transcripts={transcripts} 
           speakerMap={speakerMap} 

@@ -330,7 +330,14 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
                                 : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200'}
             `}>
                             {msg.role === 'assistant' ? (
-                                <MarkdownContent content={msg.content} />
+                                !msg.content && isLoading && idx === messages.length - 1 ? (
+                                    <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400">
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        <span className="text-sm">Thinking...</span>
+                                    </div>
+                                ) : (
+                                    <MarkdownContent content={msg.content} />
+                                )
                             ) : (
                                 msg.content
                             )}

@@ -212,8 +212,15 @@ export function RefineNotesSidebar({ meetingId, onClose, currentNotes, onApplyRe
                                 ? 'bg-blue-600 text-white'
                                 : 'bg-white text-zinc-800 border border-zinc-200'}
                         `}>
-                            {/* Split content logic */}
-                            <MarkdownContent content={msg.content.split('|||SEPARATOR|||')[0]} />
+                            {msg.role === 'assistant' && !msg.content && isLoading && idx === messages.length - 1 ? (
+                                <div className="flex items-center gap-2 text-zinc-500">
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    <span className="text-sm">Thinking...</span>
+                                </div>
+                            ) : (
+                                /* Split content logic */
+                                <MarkdownContent content={msg.content.split('|||SEPARATOR|||')[0]} />
+                            )}
                         </div>
 
                         {/* Apply Button for Refinements */}
