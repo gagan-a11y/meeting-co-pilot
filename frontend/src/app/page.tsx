@@ -1461,7 +1461,7 @@ export default function Home() {
             </div>
           )} */}
 
-          {/* Recording controls - only show when permissions are granted or already recording and not showing status messages */}
+          {/* Recording controls - only show when not in recovery mode */}
           {(!isProcessingStop && !isSavingTranscript && !pendingRecoveryId) && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
