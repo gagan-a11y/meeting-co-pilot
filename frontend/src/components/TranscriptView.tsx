@@ -137,28 +137,43 @@ function cleanRepetitions(text: string): string {
 
 // Helper function to remove filler words and stop words from transcripts
 function cleanStopWords(text: string): string {
-  // FIRST: Clean repetitions (especially short words)
-  let cleanedText = cleanRepetitions(text) || '';
+  try {
+    // Safety check: ensure input is string
+    if (typeof text !== 'string') return '';
 
-  // THEN: Remove filler words
-  const stopWords = [
-    'uh', 'um', 'er', 'ah', 'hmm', 'hm', 'eh', 'oh',
-    // 'like', 'you know', 'i mean', 'sort of', 'kind of',
-    // 'basically', 'actually', 'literally', 'right',
-    // 'thank you', 'thanks'
-  ];
+    // FIRST: Clean repetitions (especially short words)
+    let cleanedText = cleanRepetitions(text);
+    
+    // Safety check: ensure result is string
+    if (typeof cleanedText !== 'string') cleanedText = '';
 
-  // Remove each stop word (case-insensitive, with word boundaries)
-  stopWords.forEach(word => {
-    // Match the stop word at word boundaries, with optional punctuation
-    const pattern = new RegExp(`\\b${word}\\b[,\\s]*`, 'gi');
-    cleanedText = cleanedText.replace(pattern, ' ');
-  });
+    // THEN: Remove filler words
+    const stopWords = [
+      'uh', 'um', 'er', 'ah', 'hmm', 'hm', 'eh', 'oh',
+      // 'like', 'you know', 'i mean', 'sort of', 'kind of',
+      // 'basically', 'actually', 'literally', 'right',
+      // 'thank you', 'thanks'
+    ];
 
-  // Clean up extra whitespace and trim
-  cleanedText = cleanedText.replace(/\s+/g, ' ').trim();
+    // Remove each stop word (case-insensitive, with word boundaries)
+    stopWords.forEach(word => {
+      // Extra safety check before replace
+      if (typeof cleanedText !== 'string') return;
+      
+      // Match the stop word at word boundaries, with optional punctuation
+      const pattern = new RegExp(`\\b${word}\\b[,\\s]*`, 'gi');
+      cleanedText = cleanedText.replace(pattern, ' ');
+    });
 
-  return cleanedText;
+    // Clean up extra whitespace and trim
+    if (typeof cleanedText === 'string') {
+       return cleanedText.replace(/\s+/g, ' ').trim();
+    }
+    return '';
+  } catch (e) {
+    console.error('Error in cleanStopWords:', e);
+    return '';
+  }
 }
 
 function getSegmentStyle(state?: string, source?: string): string {
