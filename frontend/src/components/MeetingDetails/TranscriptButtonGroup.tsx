@@ -2,14 +2,14 @@
 
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, FolderOpen, Users, Loader2 } from 'lucide-react';
+import { Copy, Download, Users, Loader2 } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 
 
 interface TranscriptButtonGroupProps {
   transcriptCount: number;
   onCopyTranscript: () => void;
-  onOpenMeetingFolder: () => Promise<void>;
+  onDownloadRecording: () => Promise<void>;
   onDiarize?: () => void;
   diarizationStatus?: string;
   isDiarizing?: boolean;
@@ -20,7 +20,7 @@ interface TranscriptButtonGroupProps {
 export function TranscriptButtonGroup({
   transcriptCount,
   onCopyTranscript,
-  onOpenMeetingFolder,
+  onDownloadRecording,
   onDiarize,
   diarizationStatus,
   isDiarizing,
@@ -71,13 +71,13 @@ export function TranscriptButtonGroup({
           variant="outline"
           className="xl:px-4"
           onClick={() => {
-            Analytics.trackButtonClick('open_recording_folder', 'meeting_details');
-            onOpenMeetingFolder();
+            Analytics.trackButtonClick('download_recording', 'meeting_details');
+            onDownloadRecording();
           }}
-          title="Open Recording Folder"
+          title="Download Audio File"
         >
-          <FolderOpen className="h-4 w-4 lg:mr-2" />
-          <span className="hidden lg:inline">Recording</span>
+          <Download className="h-4 w-4 lg:mr-2" />
+          <span className="hidden lg:inline">Download</span>
         </Button>
       </ButtonGroup>
     </div>
