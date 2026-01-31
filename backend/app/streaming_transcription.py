@@ -267,6 +267,10 @@ class StreamingTranscriptionManager:
                                     "text": self.last_partial_text,
                                     "confidence": 1.0,
                                     "reason": "silence",
+                                    "audio_start_time": self.speech_start_time,
+                                    "audio_end_time": self.speech_end_time,
+                                    "duration": self.speech_end_time
+                                    - self.speech_start_time,
                                 }
                             )
 
@@ -431,6 +435,39 @@ class StreamingTranscriptionManager:
 
         return False
 
+    def _is_hallucination(self, text: str) -> bool:
+        """Check for common Whisper hallucinations."""
+        text = text.strip().lower()
+        hallucinations = {
+            "you",
+            "thank you.",
+            "thanks for watching",
+            "watching",
+            "subtitles by",
+            "amara.org",
+            "mbc",
+            "foreign",
+            "so machen wir government",
+            "so machen wir",
+            "sous-titrage",
+            "copyright",
+            "all rights reserved",
+        }
+
+        # Exact match or starts with hallucination
+        if text in hallucinations:
+            return True
+
+        # Check for "foreign" or repeated "you you"
+        if text == "foreign" or text == "foreign.":
+            return True
+
+        # Check for specific German hallucination seen in logs
+        if "so machen wir" in text or "government gestolken" in text:
+            return True
+
+        return False
+
     async def _handle_transcript(
         self,
         text: str,
@@ -448,7 +485,12 @@ class StreamingTranscriptionManager:
         """
 
         # Skip empty or very short text
-        if not text or len(text.strip()) < 3:
+        if not text or len(text.strip()) < 2:
+            return
+
+        # HALLUCINATION FILTER
+        if self._is_hallucination(text):
+            logger.info(f"👻 Filtered hallucination: '{text}'")
             return
 
         # IMPROVED: Remove overlapping words from start

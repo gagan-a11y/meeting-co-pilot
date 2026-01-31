@@ -90,7 +90,7 @@ function formatISTTime(timestamp: string | undefined): string {
 
 // Helper function to remove consecutive word repetitions (especially short words ≤2 letters)
 function cleanRepetitions(text: string): string {
-  if (!text || text.trim().length === 0) return text;
+  if (!text || text.trim().length === 0) return text || '';
 
   const words = text.split(/\s+/);
   const cleanedWords: string[] = [];
@@ -138,7 +138,7 @@ function cleanRepetitions(text: string): string {
 // Helper function to remove filler words and stop words from transcripts
 function cleanStopWords(text: string): string {
   // FIRST: Clean repetitions (especially short words)
-  let cleanedText = cleanRepetitions(text);
+  let cleanedText = cleanRepetitions(text) || '';
 
   // THEN: Remove filler words
   const stopWords = [

@@ -111,19 +111,40 @@ export default function Home() {
   // Recovery State
   const [showReauthModal, setShowReauthModal] = useState(false);
   const [pendingRecoveryId, setPendingRecoveryId] = useState<string | null>(null);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null); // NEW: To link audio recording
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [isRestoredSession, setIsRestoredSession] = useState(false);
 
   useEffect(() => {
     const checkRecoveries = async () => {
       const pending = await recoveryService.getAllPendingTranscripts();
       if (pending.length > 0) {
-        toast('Unsaved Transcripts Found', {
-          description: `Found ${pending.length} unsaved meetings. Click to recover.`,
-          action: {
-            label: 'Recover',
-            onClick: () => handleRecoverTranscripts(pending[0])
-          }
-        });
+        const latest = pending[0];
+        const ageMinutes = (Date.now() - latest.timestamp) / 1000 / 60;
+
+        // If backup is fresh (< 5 mins), auto-restore seamlessly
+        if (ageMinutes < 5) {
+          console.log('[Recovery] Found fresh backup (< 5 mins), auto-restoring...');
+          setMeetingTitle(latest.title);
+          setTranscripts(latest.transcripts);
+          setPendingRecoveryId(latest.meetingId);
+          setIsRestoredSession(true);
+          
+          // Don't set 'recovery' ID to avoid blocking recording controls
+          // Just treat it as loaded state ready to append
+          
+          toast.success('Session Restored', { 
+            description: 'Your meeting context has been automatically restored.' 
+          });
+        } else {
+          // Old backup: Prompt user
+          toast('Unsaved Transcripts Found', {
+            description: `Found ${pending.length} unsaved meetings. Click to recover.`,
+            action: {
+              label: 'Recover',
+              onClick: () => handleRecoverTranscripts(latest)
+            }
+          });
+        }
       }
     };
     checkRecoveries();
@@ -437,7 +458,20 @@ export default function Home() {
       console.log('Setting recording state to true');
       setIsRecording(true);
 
-      setTranscripts([]); // Clear previous transcripts when starting new recording
+      // If this is a restored session or we have existing transcripts, we are RESUMING
+      // We must ensure new transcripts don't collide with old ones
+      if (transcripts.length > 0) {
+        console.log('[Recording] Resuming existing session. Archiving previous transcripts...');
+        // Invalidate sequence IDs of existing transcripts to prevent collision with new stream (which starts at 0)
+        setTranscripts(prev => prev.map(t => ({
+          ...t,
+          sequence_id: -1 // Mark as "historical" so handleTranscriptReceived won't dedup against new 0
+        })));
+        setIsRestoredSession(false);
+      } else {
+        setTranscripts([]); // Clear previous transcripts only if starting fresh
+      }
+      
       setIsMeetingActive(true);
       Analytics.trackButtonClick('start_recording', 'home_page');
 
@@ -635,9 +669,20 @@ export default function Home() {
         return prev;
       }
 
-      // Add new transcript and sort by sequence_id to maintain order
+      // Add new transcript and sort by audio_start_time to fix ordering
       const updated = [...prev, newTranscript];
-      const sorted = updated.sort((a, b) => (a.sequence_id || 0) - (b.sequence_id || 0));
+      const sorted = updated.sort((a, b) => {
+        // Primary sort: audio timestamp (if available)
+        if (a.audio_start_time !== undefined && b.audio_start_time !== undefined) {
+          // If timestamps are essentially equal (within 100ms), rely on sequence ID
+          if (Math.abs(a.audio_start_time - b.audio_start_time) < 0.1) {
+             return (a.sequence_id || 0) - (b.sequence_id || 0);
+          }
+          return a.audio_start_time - b.audio_start_time;
+        }
+        // Fallback: sequence ID (arrival time)
+        return (a.sequence_id || 0) - (b.sequence_id || 0);
+      });
 
       console.log('✅ Added new transcript. New count:', sorted.length);
       console.log('📝 Latest transcript:', {
@@ -1461,8 +1506,8 @@ export default function Home() {
             </div>
           )} */}
 
-          {/* Recording controls - only show when not in recovery mode */}
-          {(!isProcessingStop && !isSavingTranscript && !pendingRecoveryId) && (
+          {/* Recording controls - only show when not in recovery mode OR when recording is active */}
+          {(!isProcessingStop && !isSavingTranscript && (!pendingRecoveryId || isRecording)) && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
                 className="flex justify-center pl-8 transition-[margin] duration-300"
@@ -1495,8 +1540,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* Recovery Mode Actions */}
-          {pendingRecoveryId && !isSavingTranscript && (
+          {/* Recovery Mode Actions - hide if currently recording */}
+          {pendingRecoveryId && !isSavingTranscript && !isRecording && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
               <div
                 className="flex justify-center pl-8 transition-[margin] duration-300"

@@ -173,7 +173,7 @@ class CatchUpRequest(BaseModel):
 
     transcripts: List[str]  # Current transcripts as list of strings
     model: str = "gemini"
-    model_name: str = "gemini-2.0-flash"
+    model_name: str = "gemini-2.5-flash"
 
 
 class SearchContextRequest(BaseModel):
@@ -190,7 +190,7 @@ class GenerateNotesRequest(BaseModel):
     meeting_id: str
     template_id: str = "standard_meeting"
     model: str = "gemini"
-    model_name: str = "gemini-2.0-flash"
+    model_name: str = "gemini-2.5-flash"
     custom_context: str = ""  # User-provided context for better note generation
 
 
@@ -201,7 +201,7 @@ class RefineNotesRequest(BaseModel):
     current_notes: str
     user_instruction: str
     model: str = "gemini"
-    model_name: str = "gemini-2.0-flash"
+    model_name: str = "gemini-2.5-flash"
 
 
 # ============================================
@@ -267,7 +267,7 @@ class SummaryProcessor:
         self,
         text: str,
         model: str = "gemini",
-        model_name: str = "gemini-2.0-flash",
+        model_name: str = "gemini-2.5-flash",
         chunk_size: int = 5000,
         overlap: int = 1000,
         custom_prompt: str = "Generate a summary of the meeting transcript.",
@@ -796,7 +796,7 @@ async def generate_notes_for_meeting(
     Body Parameters (optional):
         template_id: The template to use for note generation (default: standard_meeting)
         model: The AI model provider (default: gemini)
-        model_name: The specific model name (default: gemini-2.0-flash)
+        model_name: The specific model name (default: gemini-2.5-flash)
     """
     if not await rbac.can(current_user, "ai_interact", meeting_id):
         raise HTTPException(
@@ -807,12 +807,12 @@ async def generate_notes_for_meeting(
         # Use path parameter if no request body provided
         actual_meeting_id = meeting_id
         template_id = "standard_meeting"
-        model_name = "gemini-2.0-flash"
+        model_name = "gemini-2.5-flash"
         custom_context = ""
 
         if request:
             template_id = request.template_id or "standard_meeting"
-            model_name = request.model_name or "gemini-2.0-flash"
+            model_name = request.model_name or "gemini-2.5-flash"
             custom_context = request.custom_context or ""
             # If request has meeting_id, use path param anyway for consistency
 
@@ -1527,8 +1527,8 @@ async def generate_notes_with_gemini_background(
 
         genai.configure(api_key=api_key)
 
-        # Use gemini-2.0-flash which has a massive context window (1M tokens)
-        model_name = "gemini-2.0-flash"
+        # Use gemini-2.5-flash which has a massive context window (1M tokens)
+        model_name = "gemini-2.5-flash"
         model = genai.GenerativeModel(model_name)
 
         # Get template-specific instructions
