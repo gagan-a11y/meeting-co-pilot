@@ -55,6 +55,7 @@ export function SummaryGeneratorButtonGroup({
 
   const checkOllamaModelsAndGenerate = async () => {
     // Only check for Ollama provider
+    // Also skip check if provider is gemini (redundant but safe)
     if (modelConfig.provider !== 'ollama') {
       onGenerateSummary('');
       return;
@@ -130,35 +131,7 @@ export function SummaryGeneratorButtonGroup({
         )}
       </Button>
 
-      {/* Settings button */}
-      <Dialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen}>
-        <DialogTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            title="Summary Settings"
-          >
-            <Settings />
-            <span className="hidden lg:inline">AI Model</span>
-          </Button>
-        </DialogTrigger>
-        <DialogContent
-          aria-describedby={undefined}
-        >
-          <VisuallyHidden>
-            <DialogTitle>Model Settings</DialogTitle>
-          </VisuallyHidden>
-          <ModelSettingsModal
-            onSave={async (config) => {
-              await onSaveModelConfig(config);
-              setSettingsDialogOpen(false);
-            }}
-            modelConfig={modelConfig}
-            setModelConfig={setModelConfig}
-            skipInitialFetch={true}
-          />
-        </DialogContent>
-      </Dialog>
+      {/* Template selector dropdown */}
 
 
 

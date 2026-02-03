@@ -14,6 +14,7 @@ interface PersonalKey {
 
 const PROVIDERS = [
     { id: 'groq', name: 'Groq (Whisper)' },
+    { id: 'deepgram', name: 'Deepgram (Diarization)' },
     // { id: 'gemini', name: 'Gemini (Google)' },
     // { id: 'openai', name: 'OpenAI' },
     // { id: 'claude', name: 'Claude (Anthropic)' },

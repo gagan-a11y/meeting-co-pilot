@@ -12,8 +12,8 @@ interface UseModelConfigurationProps {
 export function useModelConfiguration({ serverAddress }: UseModelConfigurationProps) {
   // Note: No hardcoded defaults - DB is the source of truth
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
-    provider: 'ollama',
-    model: '', // Empty until loaded from DB
+    provider: 'gemini',
+    model: 'gemini-1.5-flash', // Default to Gemini
     whisperModel: 'large-v3'
   });
   const [isLoading, setIsLoading] = useState(true);

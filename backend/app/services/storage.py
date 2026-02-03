@@ -16,9 +16,15 @@ logger = logging.getLogger(__name__)
 # Configuration
 STORAGE_TYPE = os.getenv("STORAGE_TYPE", "local").lower()  # 'local' or 'gcp'
 GCP_BUCKET_NAME = os.getenv("GCP_BUCKET_NAME")
-GOOGLE_CREDENTIALS_PATH = os.getenv(
-    "GOOGLE_APPLICATION_CREDENTIALS", "backend/gcp-service-account.json"
-)
+
+# Determine correct credentials path
+default_creds = "backend/gcp-service-account.json"
+if os.path.exists("/app/gcp-service-account.json"):
+    default_creds = "/app/gcp-service-account.json"
+elif os.path.exists("gcp-service-account.json"):
+    default_creds = "gcp-service-account.json"
+
+GOOGLE_CREDENTIALS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", default_creds)
 
 # Initialize GCP Client (lazy load)
 _gcp_client = None

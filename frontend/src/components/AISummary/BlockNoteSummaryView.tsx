@@ -52,12 +52,14 @@ function detectSummaryFormat(data: any): { format: SummaryFormat; data: any } {
   }
 
   // Priority 3: Legacy JSON
-  const hasLegacyStructure = data.MeetingName || Object.keys(data).some(key =>
-    typeof data[key] === 'object' && data[key]?.title && data[key]?.blocks
-  );
+  const hasLegacyStructure = data.MeetingName ||
+    data.MeetingNotes ||
+    Object.keys(data).some(key =>
+      typeof data[key] === 'object' && data[key]?.title && (data[key]?.blocks || data[key]?.sections)
+    );
 
   if (hasLegacyStructure) {
-    console.log('✅ FORMAT: LEGACY (custom JSON)');
+    console.log('✅ FORMAT: LEGACY (custom JSON or MeetingNotes)');
     return { format: 'legacy', data };
   }
 

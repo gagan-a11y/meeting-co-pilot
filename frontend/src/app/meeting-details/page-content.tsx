@@ -203,6 +203,7 @@ export default function PageContent({
           onDownloadRecording={meetingOperations.handleDownloadRecording}
           isRecording={isRecording}
           onDiarize={diarization.triggerDiarization}
+          onStopDiarize={diarization.stopDiarization}
           diarizationStatus={diarization.status?.status}
           isDiarizing={diarization.isDiarizing}
           speakerMap={speakerMap}

@@ -62,32 +62,26 @@ function MeetingDetailsContent() {
         return;
       }
 
-      // ✅ STEP 3: DB is empty - check if gemma3:1b exists as fallback
-      const hasGemma = await checkForGemmaModel();
+      // ✅ STEP 3: DB is empty - apply Gemini 2.5 Flash as default
+      console.log('💾 DB empty, using Gemini 2.5 Flash as initial default');
 
-      if (hasGemma) {
-        console.log('💾 DB empty, using gemma3:1b as initial default');
+      await authFetch('/save-model-config', {
+        method: 'POST',
+        body: JSON.stringify({
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          whisperModel: 'large-v3',
+          apiKey: null // Will use env var on backend
+        })
+      });
 
-        await authFetch('/save-model-config', {
-          method: 'POST',
-          body: JSON.stringify({
-            provider: 'ollama',
-            model: 'gemma3:1b',
-            whisperModel: 'large-v3',
-            apiKey: null
-          })
-        });
-
-        setShouldAutoGenerate(true);
-      } else {
-        console.log('⚠️ No model configured and gemma3:1b not found');
-      }
+      setShouldAutoGenerate(true);
     } catch (error) {
       console.error('❌ Failed to setup auto-generation:', error);
     }
 
     setHasCheckedAutoGen(true);
-  }, [hasCheckedAutoGen, checkForGemmaModel, serverAddress]);
+  }, [hasCheckedAutoGen, serverAddress]);
 
   // Extract fetchMeetingDetails so it can be called from child components
   const fetchMeetingDetails = useCallback(async () => {
@@ -146,16 +140,41 @@ function MeetingDetailsContent() {
       const sectionKeys = _section_order || Object.keys(restSummaryData);
 
       for (const key of sectionKeys) {
-        const section = restSummaryData[key];
-        if (section && typeof section === 'object' && 'title' in section && 'blocks' in section) {
-          formattedSummary[key] = {
-            title: section.title || key,
-            blocks: Array.isArray(section.blocks) ? section.blocks.map((block: any) => ({
-              ...block,
-              color: 'default',
-              content: block?.content?.trim() || ''
-            })) : []
-          };
+        try {
+          const section = restSummaryData[key];
+
+          // Handle MeetingNotes specially by flattening its sections
+          if (key === 'MeetingNotes' && section && typeof section === 'object' && 'sections' in section) {
+            const notes = section as { sections: any[] };
+            notes.sections.forEach((s: any, idx: number) => {
+              if (s && s.title && Array.isArray(s.blocks)) {
+                // Use a unique key for each flattened section
+                const flattenKey = `notes_${idx}_${s.title.replace(/\s+/g, '_').toLowerCase()}`;
+                formattedSummary[flattenKey] = {
+                  title: s.title,
+                  blocks: s.blocks.map((block: any) => ({
+                    ...block,
+                    color: 'default',
+                    content: block?.content?.trim() || ''
+                  }))
+                };
+              }
+            });
+            continue;
+          }
+
+          if (section && typeof section === 'object' && 'title' in section && 'blocks' in section) {
+            formattedSummary[key] = {
+              title: section.title || key,
+              blocks: Array.isArray(section.blocks) ? section.blocks.map((block: any) => ({
+                ...block,
+                color: 'default',
+                content: block?.content?.trim() || ''
+              })) : []
+            };
+          }
+        } catch (error) {
+          console.warn(`Error processing section ${key}:`, error);
         }
       }
       setMeetingSummary(formattedSummary);

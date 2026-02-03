@@ -17,9 +17,9 @@ import time
 import hashlib
 from typing import Optional, Callable, Set
 from concurrent.futures import ThreadPoolExecutor
-from groq_client import GroqTranscriptionClient
-from rolling_buffer import RollingAudioBuffer
-from vad import SimpleVAD, SileroVAD, TenVAD
+from .groq_client import GroqTranscriptionClient
+from .buffer import RollingAudioBuffer
+from .vad import SimpleVAD, SileroVAD, TenVAD
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class StreamingTranscriptionManager:
 
         # 1. Try TenVAD (High Performance C++)
         try:
-            self.vad = TenVAD(threshold=0.5)
+            self.vad = TenVAD(threshold=0.3)
             logger.info("✅ Using TenVAD (C++ based)")
         except Exception as e:
             logger.warning(f"⚠️ TenVAD failed to load: {e}")
@@ -50,7 +50,7 @@ class StreamingTranscriptionManager:
         # 2. Try SileroVAD (ML based, PyTorch)
         if self.vad is None:
             try:
-                self.vad = SileroVAD(threshold=0.5)
+                self.vad = SileroVAD(threshold=0.3)
                 logger.info("✅ Using SileroVAD (ML-based)")
             except Exception as e:
                 logger.warning(f"⚠️ SileroVAD failed to load: {e}")
@@ -60,11 +60,11 @@ class StreamingTranscriptionManager:
             self.vad = SimpleVAD(threshold=0.08)
             logger.info("ℹ️ Using SimpleVAD (Fallback)")
 
-        # IMPROVED: Reduced overlap for less duplication
-        # 12s window, 10.5s slide = 1.5s overlap (was 3s)
+        # IMPROVED: Optimized for real-time responsiveness
+        # 6s window provides enough context for grammar, but is short enough to fail fast
         self.buffer = RollingAudioBuffer(
-            window_duration_ms=12000,  # 12s window
-            slide_duration_ms=10500,  # 1.5s overlap for context
+            window_duration_ms=6000,  # 6s window (was 12s)
+            slide_duration_ms=2000,  # 2s slide (matches transcription interval)
         )
 
         # Transcript state
@@ -100,16 +100,16 @@ class StreamingTranscriptionManager:
         )
         self.speech_end_time = 0.0  # End time of current speech segment (client time)
 
+        self.last_speech_time = time.time()  # Track last time speech was detected
+
         # Smart trigger thresholds
-        self.silence_threshold_ms = (
-            1200  # 1.2s silence → finalize (reverted from 600ms for cleaner output)
-        )
-        self.max_buffer_duration_ms = 12000  # 12s max → force finalize
-        self.punctuation_min_duration_ms = 3000  # Punctuation + 3s → finalize
-        self.min_transcription_interval = 2.0  # Min 2s between transcriptions
+        self.silence_threshold_ms = 1000  # 1.0s silence → finalize
+        self.max_buffer_duration_ms = 6000  # 6s max → force finalize (matches window)
+        self.punctuation_min_duration_ms = 2000  # Punctuation + 2s → finalize
+        self.min_transcription_interval = 3.0  # Check every 3.0s (less frequency to avoid Groq 429)
 
         logger.info(
-            "✅ StreamingTranscriptionManager initialized (SMART TIMER: 1.2s silence, 12s max, punctuation+3s)"
+            "✅ StreamingTranscriptionManager initialized (SMART TIMER: 1.0s silence, 6s max)"
         )
 
     async def process_audio_chunk(
@@ -170,7 +170,12 @@ class StreamingTranscriptionManager:
         # Check for speech
         is_speech = self.vad.is_speech(audio_samples)
 
+        # CRITICAL FIX: Always add to buffer to maintain time continuity
+        # Previously, silence was dropped, causing the buffer to never fill if speech was sparse
+        self.buffer.add_samples(audio_samples)
+
         if is_speech:
+            self.last_speech_time = time.time()
             if not self.is_speaking:
                 logger.debug(f"🎤 Speech started at {timestamp:.3f}s")
                 self.is_speaking = True
@@ -180,23 +185,66 @@ class StreamingTranscriptionManager:
             self.speech_end_time = current_end_time
             self.silence_duration_ms = 0
 
-            # Add to rolling buffer
-            should_transcribe = self.buffer.add_samples(audio_samples)
+        else:
+            # Silence detected
+            if self.is_speaking:
+                self.silence_duration_ms += chunk_duration * 1000  # Use actual duration
 
-            # Get current state
-            buffer_duration = self.buffer.get_buffer_duration_ms()
-            is_full = self.buffer.is_buffer_full()
-            current_time = time.time()
-            time_since_last = current_time - self.last_transcription_time
+                # SMART TRIGGER: Finalize if silence > 1200ms
+                if (
+                    self.silence_duration_ms > self.silence_threshold_ms
+                    and self.last_partial_text
+                ):
+                    # Hash-based deduplication check
+                    sentence_hash = self._get_sentence_hash(self.last_partial_text)
 
-            if self.total_chunks_processed % 20 == 0:
-                logger.debug(
-                    f"📊 Buffer: {buffer_duration:.0f}ms, full={is_full}, "
-                    f"since_last={time_since_last:.1f}s"
-                )
+                    if sentence_hash not in self.finalized_hashes:
+                        logger.info(
+                            f"🔇 SMART TRIGGER: Silence ({self.silence_duration_ms:.0f}ms > {self.silence_threshold_ms}ms)"
+                        )
 
-            # Trigger transcription when buffer is full AND enough time has passed
-            if is_full and time_since_last >= self.min_transcription_interval:
+                        if on_final:
+                            await on_final(
+                                {
+                                    "text": self.last_partial_text,
+                                    "confidence": 1.0,
+                                    "reason": "silence",
+                                    "audio_start_time": self.speech_start_time,
+                                    "audio_end_time": self.speech_end_time,
+                                    "duration": self.speech_end_time
+                                    - self.speech_start_time,
+                                }
+                            )
+
+                        self.finalized_hashes.add(sentence_hash)
+                        self.last_final_text += " " + self.last_partial_text
+                    else:
+                        logger.debug(
+                            f"⏭️  Skipping duplicate (silence): '{self.last_partial_text[:50]}...'"
+                        )
+
+                    self.last_partial_text = ""
+                    self.same_text_count = 0
+                    self.is_speaking = False
+                    self.speech_start_time = 0  # Reset speech timer
+
+        # Check triggers regardless of current speech state (since buffer is filling)
+        buffer_duration = self.buffer.get_buffer_duration_ms()
+        is_full = self.buffer.is_buffer_full()
+        current_time = time.time()
+        time_since_last = current_time - self.last_transcription_time
+
+        # Trigger transcription if:
+        # 1. Buffer is full
+        # 2. Enough time passed since last transcribe
+        # 3. We have heard speech recently (within the window duration)
+        #    This prevents transcribing 12s of pure silence.
+        has_recent_speech = (current_time - self.last_speech_time) < (
+            self.buffer.window_duration_ms / 1000
+        )
+
+        if is_full and time_since_last >= self.min_transcription_interval:
+            if has_recent_speech:
                 logger.info(
                     f"🚀 Transcription triggered (buffer={buffer_duration:.0f}ms)"
                 )
@@ -242,49 +290,12 @@ class StreamingTranscriptionManager:
                         on_final=on_final,
                         metadata=result,
                     )
-
-        else:
-            # Silence detected
-            if self.is_speaking:
-                self.silence_duration_ms += 100  # Estimate chunk duration
-
-                # SMART TRIGGER: Finalize if silence > 600ms (configurable)
-                if (
-                    self.silence_duration_ms > self.silence_threshold_ms
-                    and self.last_partial_text
-                ):
-                    # Hash-based deduplication check
-                    sentence_hash = self._get_sentence_hash(self.last_partial_text)
-
-                    if sentence_hash not in self.finalized_hashes:
-                        logger.info(
-                            f"🔇 SMART TRIGGER: Silence ({self.silence_duration_ms}ms > {self.silence_threshold_ms}ms)"
-                        )
-
-                        if on_final:
-                            await on_final(
-                                {
-                                    "text": self.last_partial_text,
-                                    "confidence": 1.0,
-                                    "reason": "silence",
-                                    "audio_start_time": self.speech_start_time,
-                                    "audio_end_time": self.speech_end_time,
-                                    "duration": self.speech_end_time
-                                    - self.speech_start_time,
-                                }
-                            )
-
-                        self.finalized_hashes.add(sentence_hash)
-                        self.last_final_text += " " + self.last_partial_text
-                    else:
-                        logger.debug(
-                            f"⏭️  Skipping duplicate (silence): '{self.last_partial_text[:50]}...'"
-                        )
-
-                    self.last_partial_text = ""
-                    self.same_text_count = 0
-                    self.is_speaking = False
-                    self.speech_start_time = 0  # Reset speech timer
+            else:
+                # Buffer is full but it's just silence.
+                # Update timestamp to prevent spinning, but don't call API.
+                # effectively "skipping" this silent window.
+                self.last_transcription_time = current_time
+                # logger.debug("Skipping transcription (silence)")
 
         self.total_chunks_processed += 1
 
@@ -525,14 +536,15 @@ class StreamingTranscriptionManager:
             self.last_partial_text = text
 
         # Emit partial
-        if on_partial:
-            await on_partial(
-                {
-                    "text": text,
-                    "confidence": confidence,
-                    "is_stable": self.same_text_count >= 2,
-                }
-            )
+        # REMOVED: User requested no partial transcription
+        # if on_partial:
+        #     await on_partial(
+        #         {
+        #             "text": text,
+        #             "confidence": confidence,
+        #             "is_stable": self.same_text_count >= 2,
+        #         }
+        #     )
 
         # SMART TIMER TRIGGER LOGIC
         is_complete_sentence = self._is_complete_sentence(text)

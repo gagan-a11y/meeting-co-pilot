@@ -8,10 +8,15 @@ from datetime import datetime
 from typing import Optional, Dict, List
 
 import aiofiles
-from db import DatabaseManager
-from groq_client import GroqTranscriptionClient
-from diarization import get_diarization_service
-from transcript_processor import TranscriptProcessor
+
+try:
+    from ..db import DatabaseManager
+    from .audio.groq_client import GroqTranscriptionClient
+    from .audio.diarization import get_diarization_service
+except (ImportError, ValueError):
+    from db import DatabaseManager
+    from services.audio.groq_client import GroqTranscriptionClient
+    from services.audio.diarization import get_diarization_service
 
 logger = logging.getLogger(__name__)
 

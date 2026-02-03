@@ -51,6 +51,7 @@ interface ModelSettingsModalProps {
   skipInitialFetch?: boolean; // Optional: skip fetching config from backend if parent manages it
 }
 
+
 export function ModelSettingsModal({
   modelConfig,
   setModelConfig,
@@ -135,7 +136,7 @@ export function ModelSettingsModal({
     ollama: models.map((model) => model.name),
     claude: ['claude-3-5-sonnet-latest', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620'],
     groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-    gemini: ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash'],
+    gemini: ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'],
     openai: [
       'gpt-5',
       'gpt-5-mini',

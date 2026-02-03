@@ -369,10 +369,11 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
         
         const textToShow = isStreaming ? streamingTranscript.visibleText : transcript.text;
         const filteredText = cleanStopWords(textToShow);
-        const originalWasEmpty = transcript.text.trim() === '';
+        const originalText = transcript.text || ''; // Default to empty string if undefined
+        const originalWasEmpty = originalText.trim() === '';
         const displayText = originalWasEmpty && !isStreaming ? '[Silence]' : filteredText;
 
-        const sizerText = cleanStopWords(isStreaming ? streamingTranscript.fullText : transcript.text)
+        const sizerText = cleanStopWords(isStreaming ? streamingTranscript.fullText : originalText)
           || (originalWasEmpty && !isStreaming ? '[Silence]' : '');
 
         const segmentStyle = getSegmentStyle(transcript.alignment_state, transcript.source);

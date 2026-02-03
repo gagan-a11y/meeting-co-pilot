@@ -2,11 +2,9 @@ import os
 import httpx
 import time
 import asyncio
-from fastapi import HTTPException, Depends, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import HTTPException, status
 from jose import jwt, JWTError
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import logging
 
 # Configure logger
@@ -14,25 +12,15 @@ logger = logging.getLogger(__name__)
 
 # Environment variables
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-logger.info(f"DEBUG AUTH: Loaded GOOGLE_CLIENT_ID: '{GOOGLE_CLIENT_ID}'")
+# logger.info(f"DEBUG AUTH: Loaded GOOGLE_CLIENT_ID: '{GOOGLE_CLIENT_ID}'")
 
 # For Google, we fetch public keys from their endpoint
 GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
-
-security = HTTPBearer()
 
 # Cache for Google Public Keys
 _google_keys_cache = None
 _google_keys_expiry = 0
 CACHE_TTL = 3600  # 1 hour
-
-
-class User(BaseModel):
-    email: str
-    name: Optional[str] = None
-    picture: Optional[str] = None
-    # We can add efficient role/org checking here later
-    # role: str = "user"
 
 
 async def get_google_public_keys() -> Dict[str, Any]:
@@ -92,8 +80,8 @@ async def verify_google_token(token: str) -> Dict[str, Any]:
         )
 
         token_aud = payload.get("aud")
-        print(f"DEBUG AUTH: Token aud: '{token_aud}'", flush=True)
-        print(f"DEBUG AUTH: Server GOOGLE_CLIENT_ID: '{GOOGLE_CLIENT_ID}'", flush=True)
+        # print(f"DEBUG AUTH: Token aud: '{token_aud}'", flush=True)
+        # print(f"DEBUG AUTH: Server GOOGLE_CLIENT_ID: '{GOOGLE_CLIENT_ID}'", flush=True)
 
         if str(token_aud) != str(GOOGLE_CLIENT_ID):
             print("DEBUG AUTH: Audience Mismatch! Continuing for debug...", flush=True)
@@ -116,43 +104,3 @@ async def verify_google_token(token: str) -> Dict[str, Any]:
             detail=detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> User:
-    """
-    Dependency to get the current authenticated user.
-    Validates JWT token from Authorization header.
-    """
-    token = credentials.credentials
-
-    if not GOOGLE_CLIENT_ID:
-        logger.warning("DEBUG AUTH: GOOGLE_CLIENT_ID is None")
-        # Don't fail here, verify_google_token will fail with a better error if needed
-
-    try:
-        payload = await verify_google_token(token)
-        logger.info(f"DEBUG AUTH: Payload extracted for {payload.get('email')}")
-    except HTTPException as e:
-        # Re-raise HTTPExceptions as-is to preserve details
-        raise e
-    except Exception as e:
-        logger.error(f"DEBUG AUTH: Unexpected verification error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Could not validate credentials: {str(e)}",
-        )
-
-    email = payload.get("email")
-    if not email:
-        raise HTTPException(status_code=401, detail="Token missing email")
-
-    # Domain restriction check (redundant with frontend but good for security)
-    if not email.endswith("@appointy.com"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Access restricted to @appointy.com users (found {email})",
-        )
-
-    return User(email=email, name=payload.get("name"), picture=payload.get("picture"))

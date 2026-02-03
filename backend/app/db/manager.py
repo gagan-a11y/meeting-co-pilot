@@ -6,10 +6,16 @@ from typing import Optional, Dict, List
 import logging
 from contextlib import asynccontextmanager
 
+# Import from core.encryption
 try:
-    from .encryption import encrypt_key, decrypt_key
+    from ..core.encryption import encrypt_key, decrypt_key
 except ImportError:
-    from encryption import encrypt_key, decrypt_key
+    # Fallback for relative imports during local testing/script execution
+    try:
+        from ...core.encryption import encrypt_key, decrypt_key
+    except ImportError:
+        # Last resort if running from inside app/
+        from core.encryption import encrypt_key, decrypt_key
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +328,8 @@ class DatabaseManager:
         audio_end_time: float = None,
         duration: float = None,
         source: str = "live",
+        speaker: str = None,
+        speaker_confidence: float = None,
     ):
         """Save a transcript for a meeting"""
         try:
@@ -331,8 +339,8 @@ class DatabaseManager:
                     """
                     INSERT INTO transcript_segments (
                         meeting_id, transcript, timestamp, summary, action_items, key_points,
-                        audio_start_time, audio_end_time, duration, source
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        audio_start_time, audio_end_time, duration, source, speaker, speaker_confidence
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 """,
                     meeting_id,
                     transcript,
@@ -344,6 +352,8 @@ class DatabaseManager:
                     audio_end_time,
                     duration,
                     source,
+                    speaker,
+                    speaker_confidence,
                 )
                 return True
         except Exception as e:
@@ -679,7 +689,7 @@ class DatabaseManager:
         async with self._get_connection() as conn:
             # Postgres column is likely lowercase 'whispermodel'
             row = await conn.fetchrow(
-                "SELECT provider, model, whisperModel FROM settings"
+                "SELECT provider, model, whisperModel FROM settings WHERE id = '1'"
             )
             if row:
                 return {
@@ -687,7 +697,12 @@ class DatabaseManager:
                     "model": row["model"],
                     "whisperModel": row["whispermodel"],
                 }
-            return None
+            # Default to Gemini if no config found
+            return {
+                "provider": "gemini",
+                "model": "gemini-1.5-flash",
+                "whisperModel": "large-v3",
+            }
 
     async def save_model_config(self, provider: str, model: str, whisperModel: str):
         """Save the model configuration"""
@@ -775,6 +790,7 @@ class DatabaseManager:
             "groq": "groqapikey",
             "ollama": "ollamaapikey",
             "gemini": "geminiapikey",
+            "deepgram": "deepgramapikey",
         }
         if provider not in provider_map:
             return ""

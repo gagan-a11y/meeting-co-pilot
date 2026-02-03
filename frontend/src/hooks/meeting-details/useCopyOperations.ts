@@ -3,6 +3,7 @@ import { Transcript, Summary } from '@/types';
 import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummaryView';
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
+import { authFetch } from '@/lib/api';
 
 interface UseCopyOperationsProps {
   meeting: any;
@@ -34,28 +35,33 @@ export function useCopyOperations({
       return `[${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
     };
 
-    const header = `# Transcript of the Meeting: ${meeting.id} - ${meetingTitle ?? meeting.title}\n\n`;
-    const date = `## Date: ${new Date(meeting.created_at).toLocaleDateString()}\n\n`;
-    const fullTranscript = transcripts
-      .map(t => {
-        const speakerLabel = `**${t.speaker || "Speaker 0"}:** `;
-        return `${speakerLabel}${formatTime(t.audio_start_time, t.timestamp)} ${t.text}`;
-      })
-      .join('\n');
+    try {
+      const header = `# Transcript of the Meeting: ${meeting.id} - ${meetingTitle ?? meeting.title}\n\n`;
+      const date = `## Date: ${new Date(meeting.created_at).toLocaleDateString()}\n\n`;
+      const fullTranscriptText = transcripts
+        .map(t => {
+          const speakerLabel = `**${t.speaker || "Speaker 0"}:** `;
+          return `${speakerLabel}${formatTime(t.audio_start_time, t.timestamp)} ${t.text}`;
+        })
+        .join('\n');
 
-    await navigator.clipboard.writeText(header + date + fullTranscript);
-    toast.success("Transcript copied to clipboard");
+      await navigator.clipboard.writeText(header + date + fullTranscriptText);
+      toast.success("Transcript copied to clipboard");
 
-    // Track copy analytics
-    const wordCount = transcripts
-      .map(t => t.text.split(/\s+/).length)
-      .reduce((a, b) => a + b, 0);
+      // Track copy analytics
+      const wordCount = transcripts
+        .map(t => t.text.split(/\s+/).length)
+        .reduce((a, b) => a + b, 0);
 
-    await Analytics.trackCopy('transcript', {
-      meeting_id: meeting.id,
-      transcript_length: transcripts.length.toString(),
-      word_count: wordCount.toString()
-    });
+      await Analytics.trackCopy('transcript', {
+        meeting_id: meeting.id,
+        transcript_length: transcripts.length.toString(),
+        word_count: wordCount.toString()
+      });
+    } catch (err) {
+      console.error('Failed to copy transcript:', err);
+      toast.error('Failed to copy transcript to clipboard. Please check browser permissions.');
+    }
   }, [transcripts, meeting, meetingTitle]);
 
   // Copy summary to clipboard
@@ -139,7 +145,7 @@ export function useCopyOperations({
       });
     } catch (error) {
       console.error('❌ Failed to copy summary:', error);
-      toast.error("Failed to copy summary");
+      toast.error("Failed to copy summary to clipboard. Please check browser permissions.");
     }
   }, [aiSummary, meetingTitle, meeting, blockNoteSummaryRef]);
 
