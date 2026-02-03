@@ -1,6 +1,7 @@
 import asyncpg
 import json
 import os
+import asyncio
 from datetime import datetime
 from typing import Optional, Dict, List
 import logging
@@ -41,7 +42,31 @@ class DatabaseManager:
         # In a real prod app, you'd want a global pool created on startup
         # For now, creating a connection per request is okay for low traffic,
         # but we should move to a pool pattern in main.py startup event later.
-        conn = await asyncpg.connect(self.db_url)
+
+        conn = None
+        max_retries = 3
+        retry_delay = 1
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                conn = await asyncpg.connect(self.db_url)
+                break
+            except (OSError, asyncpg.PostgresError) as e:
+                last_error = e
+                logger.warning(
+                    f"Database connection attempt {attempt + 1}/{max_retries} failed: {e}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2**attempt))
+
+        if conn is None:
+            logger.error(f"Failed to connect to database after {max_retries} attempts")
+            if last_error:
+                raise last_error
+            else:
+                raise ConnectionError("Could not connect to database")
+
         try:
             yield conn
         finally:
@@ -360,6 +385,46 @@ class DatabaseManager:
             logger.error(f"Error saving transcript: {str(e)}")
             raise
 
+    async def save_meeting_transcripts_batch(self, meeting_id: str, transcripts: list):
+        """Batch save transcripts for a meeting"""
+        if not transcripts:
+            return True
+
+        try:
+            async with self._get_connection() as conn:
+                # Prepare data for executemany
+                data = [
+                    (
+                        meeting_id,
+                        t.text,
+                        t.timestamp,
+                        "",  # summary
+                        "",  # action_items
+                        "",  # key_points
+                        t.audio_start_time,
+                        t.audio_end_time,
+                        t.duration,
+                        "web_client",  # source
+                        None,  # speaker
+                        None,  # speaker_confidence
+                    )
+                    for t in transcripts
+                ]
+
+                await conn.executemany(
+                    """
+                    INSERT INTO transcript_segments (
+                        meeting_id, transcript, timestamp, summary, action_items, key_points,
+                        audio_start_time, audio_end_time, duration, source, speaker, speaker_confidence
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    """,
+                    data,
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Error batch saving transcripts: {str(e)}")
+            raise
+
     async def save_transcript_version(
         self,
         meeting_id: str,
@@ -532,6 +597,28 @@ class DatabaseManager:
                     return json.loads(content_json)
                 return content_json
             return None
+
+    async def delete_transcript_version(self, meeting_id: str, version_num: int) -> bool:
+        """Delete a specific transcript version snapshot."""
+        try:
+            async with self._get_connection() as conn:
+                result = await conn.execute(
+                    """
+                    DELETE FROM transcript_versions
+                    WHERE meeting_id = $1 AND version_num = $2
+                """,
+                    meeting_id,
+                    version_num,
+                )
+
+                if result == "DELETE 0":
+                    return False
+
+                logger.info(f"Deleted version v{version_num} for meeting {meeting_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting transcript version: {str(e)}")
+            raise
 
     async def clear_meeting_transcripts(self, meeting_id: str):
         """Delete all transcript segments for a meeting"""

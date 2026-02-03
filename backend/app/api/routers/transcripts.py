@@ -1019,6 +1019,65 @@ def generate_project_kickoff_markdown(data: dict) -> str:
 # --- API Endpoints (rest remains the same) ---
 
 
+@router.get("/meetings/{meeting_id}/versions")
+async def get_transcript_versions(
+    meeting_id: str, current_user: User = Depends(get_current_user)
+):
+    """Get all transcript versions for a meeting."""
+    if not await rbac.can(current_user, "view", meeting_id):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    try:
+        versions = await db.get_transcript_versions(meeting_id)
+        return {"meeting_id": meeting_id, "versions": versions}
+    except Exception as e:
+        logger.error(f"Error getting transcript versions: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/meetings/{meeting_id}/versions/{version_num}")
+async def get_transcript_version_content(
+    meeting_id: str, version_num: int, current_user: User = Depends(get_current_user)
+):
+    """Get the content of a specific transcript version."""
+    if not await rbac.can(current_user, "view", meeting_id):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    try:
+        content = await db.get_transcript_version_content(meeting_id, version_num)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Version not found")
+        return {
+            "meeting_id": meeting_id,
+            "version_num": version_num,
+            "content": content,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error getting transcript version content: {str(e)}", exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+@router.delete("/meetings/{meeting_id}/versions/{version_num}")
+async def delete_transcript_version(
+    meeting_id: str, version_num: int, current_user: User = Depends(get_current_user)
+):
+    """Delete a specific transcript version snapshot."""
+    if not await rbac.can(current_user, "edit", meeting_id):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    try:
+        success = await db.delete_transcript_version(meeting_id, version_num)
+        if not success:
+            raise HTTPException(status_code=404, detail="Version not found")
+        return {"message": f"Version {version_num} deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting transcript version: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/process-transcript")
 async def process_transcript_api(
     transcript: TranscriptRequest,
@@ -1131,17 +1190,8 @@ async def save_transcript(
                 owner_id=current_user.email,
             )
 
-        # Save segments
-        for t in data.transcripts:
-            await db.save_meeting_transcript(
-                meeting_id=meeting_id,
-                transcript=t.text,
-                timestamp=t.timestamp,
-                audio_start_time=t.audio_start_time,
-                audio_end_time=t.audio_end_time,
-                duration=t.duration,
-                source="web_client",
-            )
+        # Save segments (batch)
+        await db.save_meeting_transcripts_batch(meeting_id, data.transcripts)
 
         # CRITICAL FIX: Ensure audio folder matches meeting_id
         # The recorder might have stored files under session_id. We must rename it to meeting_id

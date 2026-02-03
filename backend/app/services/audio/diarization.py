@@ -282,9 +282,13 @@ class DiarizationService:
 
             # Step 3: Send to diarization API
             if provider == "deepgram":
-                segments = await self._diarize_with_deepgram(wav_data, meeting_id)
+                segments = await self._diarize_with_deepgram(
+                    wav_data, meeting_id, api_key
+                )
             elif provider == "assemblyai":
-                segments = await self._diarize_with_assemblyai(wav_data, meeting_id)
+                segments = await self._diarize_with_assemblyai(
+                    wav_data, meeting_id, api_key
+                )
             else:
                 raise ValueError(f"Unknown provider: {provider}")
 
@@ -324,7 +328,7 @@ class DiarizationService:
             )
 
     async def _diarize_with_deepgram(
-        self, audio_data: bytes, meeting_id: str
+        self, audio_data: bytes, meeting_id: str, api_key: str
     ) -> List[SpeakerSegment]:
         """
         Send audio to Deepgram for diarization.
@@ -337,121 +341,167 @@ class DiarizationService:
         Returns:
             List of SpeakerSegment objects
         """
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(
-                self.deepgram_url,
-                headers={
-                    "Authorization": f"Token {self.deepgram_api_key}",
-                    "Content-Type": "audio/wav",
-                },
-                params={
-                    "model": "nova-2",
-                    "diarize": "true",
-                    "punctuate": "true",
-                    "utterances": "true",
-                    "smart_format": "false",  # DISABLED: To prevent aggressive word loss
-                },
-                content=audio_data,
-            )
+        max_retries = 3
+        retry_delay = 1
+        last_error = None
 
-            if response.status_code != 200:
-                error_text = response.text
-                logger.error(
-                    f"Deepgram API error: {response.status_code} - {error_text}"
-                )
-                raise Exception(f"Deepgram API error: {response.status_code}")
+        # Determine content type based on header
+        content_type = "audio/wav"
+        if audio_data.startswith(b"ID3") or audio_data.startswith(b"\xff\xfb"):
+            content_type = "audio/mp3"
+        elif audio_data.startswith(b"OggS"):
+            content_type = "audio/ogg"
 
-            result = response.json()
+        # Helper to create an IPv4-only transport (fixes Docker/network issues)
+        def _get_transport_ipv4():
+            import httpcore
 
-            # Parse response into segments
-            segments = []
+            return httpx.AsyncHTTPTransport(local_address="0.0.0.0")
 
-            # QUALITY TRANSCRIPTION: Prefer 'utterances' for natural punctuation,
-            # fallback to 'words' reconstruction for 100% completeness.
-            utterances = result.get("results", {}).get("utterances", [])
-            words = (
-                result.get("results", {})
-                .get("channels", [{}])[0]
-                .get("alternatives", [{}])[0]
-                .get("words", [])
-            )
-
-            if not words and not utterances:
-                logger.warning(
-                    f"No results returned by Deepgram for meeting {meeting_id}"
-                )
-                return []
-
-            raw_segments = []
-
-            if utterances:
-                # Use punctuated utterances
-                for u in utterances:
-                    raw_segments.append(
-                        SpeakerSegment(
-                            speaker=f"Speaker {u.get('speaker', 0)}",
-                            start_time=u.get("start", 0),
-                            end_time=u.get("end", 0),
-                            text=u.get("transcript", ""),
-                            confidence=u.get("confidence", 1.0),
-                            word_count=len(u.get("words", [])),
-                        )
+        for attempt in range(max_retries):
+            try:
+                # Use transport explicitly to force IPv4 if needed, or rely on standard client
+                async with httpx.AsyncClient(
+                    timeout=300.0, transport=_get_transport_ipv4()
+                ) as client:
+                    response = await client.post(
+                        self.deepgram_url,
+                        headers={
+                            "Authorization": f"Token {api_key}",
+                            "Content-Type": content_type,
+                        },
+                        params={
+                            "model": "nova-2",
+                            "diarize": "true",
+                            "punctuate": "true",
+                            "utterances": "true",
+                            "smart_format": "false",
+                        },
+                        content=audio_data,
                     )
-            else:
-                # Fallback: Reconstruct from words (raw, but complete)
-                current_speaker = None
-                current_segment = None
 
-                for w in words:
-                    speaker = f"Speaker {w.get('speaker', 0)}"
-                    if speaker != current_speaker:
+                    if response.status_code != 200:
+                        error_text = response.text
+                        logger.error(
+                            f"Deepgram API error (Attempt {attempt + 1}/{max_retries}): {response.status_code} - {error_text}"
+                        )
+                        # If 4xx error (client error), do not retry
+                        if 400 <= response.status_code < 500:
+                            raise Exception(
+                                f"Deepgram API error: {response.status_code}"
+                            )
+
+                        response.raise_for_status()
+
+                    result = response.json()
+
+                    # Parse response into segments
+                    segments = []
+
+                    # QUALITY TRANSCRIPTION: Prefer 'utterances' for natural punctuation,
+                    # fallback to 'words' reconstruction for 100% completeness.
+                    utterances = result.get("results", {}).get("utterances", [])
+                    words = (
+                        result.get("results", {})
+                        .get("channels", [{}])[0]
+                        .get("alternatives", [{}])[0]
+                        .get("words", [])
+                    )
+
+                    if not words and not utterances:
+                        logger.warning(
+                            f"No results returned by Deepgram for meeting {meeting_id}"
+                        )
+                        return []
+
+                    raw_segments = []
+
+                    if utterances:
+                        # Use punctuated utterances
+                        for u in utterances:
+                            raw_segments.append(
+                                SpeakerSegment(
+                                    speaker=f"Speaker {u.get('speaker', 0)}",
+                                    start_time=u.get("start", 0),
+                                    end_time=u.get("end", 0),
+                                    text=u.get("transcript", ""),
+                                    confidence=u.get("confidence", 1.0),
+                                    word_count=len(u.get("words", [])),
+                                )
+                            )
+                    elif words:
+                        # Fallback: Reconstruct from words (raw, but complete)
+                        current_speaker = None
+                        current_segment = None
+
+                        for w in words:
+                            speaker = f"Speaker {w.get('speaker', 0)}"
+                            if speaker != current_speaker:
+                                if current_segment:
+                                    raw_segments.append(current_segment)
+                                current_speaker = speaker
+                                current_segment = SpeakerSegment(
+                                    speaker=speaker,
+                                    start_time=w.get("start", 0),
+                                    end_time=w.get("end", 0),
+                                    text=w.get("word", ""),
+                                    confidence=w.get("speaker_confidence", 1.0),
+                                    word_count=1,
+                                )
+                            else:
+                                if current_segment:
+                                    current_segment.end_time = w.get(
+                                        "end", current_segment.end_time
+                                    )
+                                    current_segment.text += " " + w.get("word", "")
+                                    current_segment.word_count += 1
                         if current_segment:
                             raw_segments.append(current_segment)
-                        current_speaker = speaker
-                        current_segment = SpeakerSegment(
-                            speaker=speaker,
-                            start_time=w.get("start", 0),
-                            end_time=w.get("end", 0),
-                            text=w.get("word", ""),
-                            confidence=w.get("speaker_confidence", 1.0),
-                            word_count=1,
-                        )
-                    else:
-                        current_segment.end_time = w.get(
-                            "end", current_segment.end_time
-                        )
-                        current_segment.text += " " + w.get("word", "")
-                        current_segment.word_count += 1
-                if current_segment:
-                    raw_segments.append(current_segment)
 
-            # NATURAL GROUPING: Merge consecutive segments from same speaker
-            if not raw_segments:
-                return []
+                    if not raw_segments:
+                        logger.warning(f"No usable segments for {meeting_id}")
+                        return []
 
-            segments = []
-            current = raw_segments[0]
-            MAX_GAP = 5.0  # seconds
+                    # NATURAL GROUPING: Merge consecutive segments from same speaker
+                    segments = []
+                    current = raw_segments[0]
+                    MAX_GAP = 5.0  # seconds
 
-            for next_seg in raw_segments[1:]:
-                gap = next_seg.start_time - current.end_time
-                if next_seg.speaker == current.speaker and gap < MAX_GAP:
-                    # Merge
-                    current.text += " " + next_seg.text
-                    current.end_time = next_seg.end_time
-                    current.word_count += next_seg.word_count
-                else:
+                    for next_seg in raw_segments[1:]:
+                        gap = next_seg.start_time - current.end_time
+                        if next_seg.speaker == current.speaker and gap < MAX_GAP:
+                            # Merge
+                            current.text += " " + next_seg.text
+                            current.end_time = next_seg.end_time
+                            current.word_count += next_seg.word_count
+                        else:
+                            segments.append(current)
+                            current = next_seg
+
                     segments.append(current)
-                    current = next_seg
+                    logger.info(
+                        f"Reconstructed {len(segments)} natural segments for {meeting_id}"
+                    )
+                    return segments
 
-            segments.append(current)
-            logger.info(
-                f"Reconstructed {len(segments)} natural segments for {meeting_id}"
-            )
-            return segments
+            except httpx.NetworkError as e:
+                last_error = e
+                logger.warning(
+                    f"Deepgram network error (Attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (2**attempt))
+            except Exception as e:
+                # Non-network errors (or 4xx from above) - re-raise immediately
+                raise e
+
+        # If we get here, all retries failed
+        raise Exception(
+            f"Deepgram API failed after {max_retries} attempts: {last_error}"
+        )
 
     async def _diarize_with_assemblyai(
-        self, audio_data: bytes, meeting_id: str
+        self, audio_data: bytes, meeting_id: str, api_key: str
     ) -> List[SpeakerSegment]:
         """
         Send audio to AssemblyAI for diarization.
@@ -470,7 +520,7 @@ class DiarizationService:
             upload_response = await client.post(
                 f"{self.assemblyai_url}/upload",
                 headers={
-                    "authorization": self.assemblyai_api_key,
+                    "authorization": api_key,
                     "content-type": "application/octet-stream",
                 },
                 content=audio_data,
@@ -488,7 +538,7 @@ class DiarizationService:
             transcript_response = await client.post(
                 f"{self.assemblyai_url}/transcript",
                 headers={
-                    "authorization": self.assemblyai_api_key,
+                    "authorization": api_key,
                     "content-type": "application/json",
                 },
                 json={
@@ -511,7 +561,7 @@ class DiarizationService:
             while True:
                 status_response = await client.get(
                     f"{self.assemblyai_url}/transcript/{transcript_id}",
-                    headers={"authorization": self.assemblyai_api_key},
+                    headers={"authorization": api_key},
                 )
 
                 status_data = status_response.json()

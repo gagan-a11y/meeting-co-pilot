@@ -117,7 +117,9 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
 
         # So I need to replicate the main.py orchestration here.
 
-        # Step A: High-fidelity Whisper (The Words)
+        # Step A: High-fidelity Whisper (The Words) via Groq
+        # This provides the accurate text baseline that we map speaker labels onto
+        logger.info(f"💎 Running High-Fidelity Groq Whisper for {meeting_id}...")
         whisper_segments = await diarization_service.transcribe_with_whisper(audio_data)
 
         # CHECK CANCELLATION
@@ -132,6 +134,7 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
                 return
 
         # Step B: Diarization (The Speakers)
+        # Note: We pass user_email so it can fetch the user-provided Deepgram API key
         result = await diarization_service.diarize_meeting(
             meeting_id=meeting_id,
             storage_path=storage_path,
@@ -152,124 +155,78 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
                 return
 
         if result.status == "completed":
-            # Step C: Align
+            # Step C: Align (Using Groq Whisper as the high-accuracy baseline)
             (
                 final_segments,
                 alignment_metrics,
             ) = await diarization_service.align_with_transcripts(
                 meeting_id,
                 result,
-                whisper_segments
-                if whisper_segments
-                else [
+                whisper_segments if whisper_segments else [
                     {"start": s.start_time, "end": s.end_time, "text": s.text}
                     for s in result.segments
-                ],
+                ]
             )
 
             # Step D: Save to DB
-            # Use DB transaction logic similar to main.py
-            # I will simplify by using `db` methods if possible, or raw SQL if `db` methods are missing.
-            # `db.save_transcript_version` exists.
-            # `db.clear_meeting_transcripts` exists.
-            # `db.save_meeting_transcript` exists.
-
-            # I'll re-implement the granular SQL operations using db._get_connection for performance/consistency
-            # as moving them all to `db/manager.py` right now might be too big a refactor.
-
             async with db._get_connection() as conn:
                 async with conn.transaction():
-                    # Archive logic (simplified: if no versions, save current as v1)
-                    # ... (omitted for brevity, assuming existing logic or reliance on v1 creation)
-
-                    # Clear old
-                    await db.clear_meeting_transcripts(meeting_id)
-
-                    # Insert new segments
-                    for t in final_segments:
-                        await db.save_meeting_transcript(
-                            meeting_id=meeting_id,
-                            transcript=t.get("text", ""),
-                            timestamp=f"({int(t.get('start', 0) // 60):02d}:{int(t.get('start', 0) % 60):02d})",
-                            speaker=t.get("speaker", "Speaker 0"),
-                            speaker_confidence=t.get("speaker_confidence", 1.0),
-                            audio_start_time=t.get("start"),
-                            audio_end_time=t.get("end"),
-                            duration=t.get("end", 0) - t.get("start", 0),
-                            source="diarized",
-                        )
-                        # Note: `save_meeting_transcript` doesn't support all the new columns (alignment_state, etc)
-                        # I should probably update `db.save_meeting_transcript` or use raw SQL here.
-                        # Using raw SQL to ensure all fields are saved.
-
-                        await conn.execute(
-                            """
-                            UPDATE transcript_segments 
-                            SET alignment_state = $1, speaker_confidence = $2
-                            WHERE meeting_id = $3 AND audio_start_time = $4
-                        """,
-                            t.get("alignment_state"),
-                            t.get("speaker_confidence"),
-                            meeting_id,
-                            t.get("start"),
-                        )
-
-                    # Save Version (only if no diarized version exists for this meeting)
-                    existing_version = await conn.fetchval(
-                        """
-                        SELECT version_id FROM transcript_versions 
-                        WHERE meeting_id = $1 AND source = 'diarized'
-                        ORDER BY created_at DESC LIMIT 1
-                        """,
-                        meeting_id,
+                    # 1. Clear old transcripts
+                    await conn.execute(
+                        "DELETE FROM transcript_segments WHERE meeting_id = $1",
+                        meeting_id
                     )
 
-                    if existing_version:
-                        # Update existing version instead of creating duplicate
+                    # 2. Insert new aligned segments
+                    for t in final_segments:
+                        start_val = t.get("start", 0)
+                        timestamp_str = f"({int(start_val // 60):02d}:{int(start_val % 60):02d})"
+
                         await conn.execute(
                             """
-                            UPDATE transcript_versions 
-                            SET content = $1, alignment_config = $2, created_at = $3
-                            WHERE version_id = $4
+                            INSERT INTO transcript_segments (
+                                meeting_id, transcript, timestamp,
+                                audio_start_time, audio_end_time, duration,
+                                source, speaker, speaker_confidence, alignment_state
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                             """,
-                            json.dumps(final_segments),
-                            json.dumps({"provider": provider}),
-                            datetime.utcnow(),
-                            existing_version,
-                        )
-                        logger.info(
-                            f"Updated existing diarized version {existing_version}"
-                        )
-                    else:
-                        await db.save_transcript_version(
-                            meeting_id=meeting_id,
-                            source="diarized",
-                            content=final_segments,
-                            is_authoritative=True,
-                            alignment_config={"provider": provider},
-                            created_by=user_email,
+                            meeting_id,
+                            t.get("text", ""),
+                            timestamp_str,
+                            t.get("start"),
+                            t.get("end"),
+                            (t.get("end", 0) - (t.get("start") or 0)),
+                            "diarized",
+                            t.get("speaker", "Speaker 0"),
+                            t.get("speaker_confidence", 1.0),
+                            t.get("alignment_state")
                         )
 
-            # Update Jobs table
+                    # 3. Save Version (Always create a new version as per user request)
+                    await db.save_transcript_version(
+                        meeting_id=meeting_id,
+                        source="diarized",
+                        content=final_segments,
+                        is_authoritative=True,
+                        created_by=user_email,
+                    )
+
+            # 4. Update Jobs table
             async with db._get_connection() as conn:
                 segments_json = [
                     {"speaker": s.speaker, "start": s.start_time, "end": s.end_time}
                     for s in result.segments
                 ]
                 await conn.execute(
-                    """
-                    UPDATE diarization_jobs SET status = 'completed', completed_at = $1, result_json = $2 WHERE meeting_id = $3
-                 """,
+                    "UPDATE diarization_jobs SET status = 'completed', completed_at = $1, result_json = $2 WHERE meeting_id = $3",
                     datetime.utcnow(),
                     json.dumps(segments_json),
                     meeting_id,
                 )
-
                 await conn.execute(
                     "UPDATE meetings SET diarization_status = 'completed' WHERE id = $1",
                     meeting_id,
                 )
-
         else:
             # Failed
             async with db._get_connection() as conn:
