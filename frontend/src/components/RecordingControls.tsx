@@ -93,8 +93,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         },
 
         onPartial: (text, confidence, isStable) => {
-          // Partial transcripts (gray, updating) - optional to show
-          console.log('[Partial]', text.substring(0, 50) + '...', `(stable: ${isStable})`);
+          // Partial transcripts disabled by backend
         },
 
         onFinal: (text, confidence, reason, timing) => {

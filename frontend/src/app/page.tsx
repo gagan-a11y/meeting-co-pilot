@@ -66,7 +66,7 @@ export default function Home() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'gemini',
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     whisperModel: 'large-v3'
   });
   const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
@@ -128,12 +128,12 @@ export default function Home() {
           setTranscripts(latest.transcripts);
           setPendingRecoveryId(latest.meetingId);
           setIsRestoredSession(true);
-          
+
           // Don't set 'recovery' ID to avoid blocking recording controls
           // Just treat it as loaded state ready to append
-          
-          toast.success('Session Restored', { 
-            description: 'Your meeting context has been automatically restored.' 
+
+          toast.success('Session Restored', {
+            description: 'Your meeting context has been automatically restored.'
           });
         } else {
           // Old backup: Prompt user
@@ -260,7 +260,7 @@ export default function Home() {
     claude: ['claude-3-5-sonnet-latest'],
     groq: ['llama-3.3-70b-versatile'],
     openrouter: [],
-    gemini: ['gemini-1.5-flash', 'gemini-2.0-flash'],
+    gemini: ['gemini-1.5-flash', 'gemini-2.5-flash'],
     openai: ['gpt-4o', 'gpt-4-turbo'],
   };
 
@@ -471,7 +471,7 @@ export default function Home() {
       } else {
         setTranscripts([]); // Clear previous transcripts only if starting fresh
       }
-      
+
       setIsMeetingActive(true);
       Analytics.trackButtonClick('start_recording', 'home_page');
 
@@ -676,7 +676,7 @@ export default function Home() {
         if (a.audio_start_time !== undefined && b.audio_start_time !== undefined) {
           // If timestamps are essentially equal (within 100ms), rely on sequence ID
           if (Math.abs(a.audio_start_time - b.audio_start_time) < 0.1) {
-             return (a.sequence_id || 0) - (b.sequence_id || 0);
+            return (a.sequence_id || 0) - (b.sequence_id || 0);
           }
           return a.audio_start_time - b.audio_start_time;
         }
@@ -998,7 +998,7 @@ export default function Home() {
     }
   }, [originalTranscript, modelConfig, serverAddress]);
 
-  const handleCopyTranscript = useCallback(() => {
+  const handleCopyTranscript = useCallback(async () => {
     // Format timestamps as recording-relative [MM:SS] instead of wall-clock time
     const formatTime = (seconds: number | undefined): string => {
       if (seconds === undefined) return '[00:00]';
@@ -1011,9 +1011,13 @@ export default function Home() {
     const fullTranscript = transcripts
       .map(t => `${formatTime(t.audio_start_time)} ${t.text}`)
       .join('\n');
-    navigator.clipboard.writeText(fullTranscript);
-
-    toast.success("Transcript copied to clipboard");
+    try {
+      await navigator.clipboard.writeText(fullTranscript);
+      toast.success("Transcript copied to clipboard");
+    } catch (err) {
+      console.error('Failed to copy transcript:', err);
+      toast.error('Failed to copy transcript to clipboard');
+    }
   }, [transcripts]);
 
   // Handle Catch Me Up - get quick summary of meeting so far
@@ -1104,12 +1108,12 @@ export default function Home() {
       // The catch-up endpoint currently only supports gemini and groq
       const supportedProviders = ['gemini', 'groq'];
       let provider = modelConfig?.provider || 'gemini';
-      let modelName = modelConfig?.model || 'gemini-2.0-flash';
+      let modelName = modelConfig?.model || 'gemini-2.5-flash';
 
       if (!supportedProviders.includes(provider)) {
         console.warn(`[CatchUp] Unsupported provider "${provider}" selected. Falling back to Gemini.`);
         provider = 'gemini';
-        modelName = 'gemini-2.0-flash';
+        modelName = 'gemini-2.5-flash';
       }
 
       const response = await authFetch('/catch-up', {

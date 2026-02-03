@@ -16,6 +16,7 @@ interface TranscriptPanelProps {
   onDownloadRecording: () => Promise<void>;
   isRecording: boolean;
   onDiarize?: () => void;
+  onStopDiarize?: () => void; // NEW
   diarizationStatus?: string;
   isDiarizing?: boolean;
   speakerMap?: { [label: string]: string };
@@ -29,6 +30,7 @@ export function TranscriptPanel({
   onDownloadRecording,
   isRecording,
   onDiarize,
+  onStopDiarize,
   diarizationStatus,
   isDiarizing,
   speakerMap,
@@ -114,6 +116,7 @@ export function TranscriptPanel({
           onCopyTranscript={onCopyTranscript}
           onDownloadRecording={onDownloadRecording}
           onDiarize={onDiarize}
+          onStopDiarize={onStopDiarize}
           diarizationStatus={diarizationStatus}
           isDiarizing={isDiarizing}
           isRecording={isRecording}

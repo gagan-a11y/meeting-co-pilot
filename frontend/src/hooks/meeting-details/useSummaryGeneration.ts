@@ -88,7 +88,7 @@ export function useSummaryGeneration({
             meeting_id: meeting.id,
             template_id: selectedTemplate,
             model: 'gemini',
-            model_name: 'gemini-2.0-flash',
+            model_name: 'gemini-2.5-flash',
             custom_context: customPrompt || '',  // Add context from user input
           })
         });
@@ -160,10 +160,18 @@ export function useSummaryGeneration({
 
           // Legacy format handling
           const summarySections = Object.entries(pollingResult.data).filter(([key]) => key !== 'MeetingName');
-          const allEmpty = summarySections.every(([, section]) => !(section as any).blocks || (section as any).blocks.length === 0);
+          // Improved empty check to handle MeetingNotes structure
+          const allEmpty = summarySections.every(([key, section]) => {
+            if (key === 'MeetingNotes') {
+              const notes = section as any;
+              return !notes.sections || notes.sections.length === 0 || 
+                     notes.sections.every((s: any) => !s.blocks || s.blocks.length === 0);
+            }
+            return !(section as any).blocks || (section as any).blocks.length === 0;
+          });
 
           if (allEmpty) {
-            console.error('Summary completed but all sections empty');
+            console.error('Summary completed but all sections empty', pollingResult.data);
             setSummaryError('Summary generation completed but returned empty content.');
             setSummaryStatus('error');
 
@@ -187,6 +195,27 @@ export function useSummaryGeneration({
           for (const key of sectionKeys) {
             try {
               const section = summaryData[key];
+              
+              // Handle MeetingNotes specially by flattening its sections
+              if (key === 'MeetingNotes' && section && typeof section === 'object' && 'sections' in section) {
+                const notes = section as { sections: any[] };
+                notes.sections.forEach((s: any, idx: number) => {
+                  if (s && s.title && Array.isArray(s.blocks)) {
+                    // Use a unique key for each flattened section
+                    const flattenKey = `notes_${idx}_${s.title.replace(/\s+/g, '_').toLowerCase()}`;
+                    formattedSummary[flattenKey] = {
+                      title: s.title,
+                      blocks: s.blocks.map((block: any) => ({
+                        ...block,
+                        color: 'default',
+                        content: block?.content?.trim() || ''
+                      }))
+                    };
+                  }
+                });
+                continue;
+              }
+
               if (section && typeof section === 'object' && 'title' in section && 'blocks' in section) {
                 const typedSection = section as { title?: string; blocks?: any[] };
 
@@ -276,7 +305,7 @@ export function useSummaryGeneration({
 
     // Always use Gemini for notes generation (best quality)
     const notesProvider = 'gemini';
-    const notesModel = 'gemini-2.0-flash';
+    const notesModel = 'gemini-2.5-flash';
     
     console.log('🚀 Starting notes generation with Gemini:', {
       provider: notesProvider,

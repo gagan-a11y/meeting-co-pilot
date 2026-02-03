@@ -24,13 +24,13 @@ from datetime import datetime
 from dataclasses import dataclass
 
 try:
-    from .audio_recorder import AudioRecorder
+    from .recorder import AudioRecorder
     from .groq_client import GroqTranscriptionClient
-    from .alignment_engine import AlignmentEngine
-except ImportError:
-    from audio_recorder import AudioRecorder
-    from groq_client import GroqTranscriptionClient
-    from alignment_engine import AlignmentEngine
+    from .alignment import AlignmentEngine
+except (ImportError, ValueError):
+    from services.audio.recorder import AudioRecorder
+    from services.audio.groq_client import GroqTranscriptionClient
+    from services.audio.alignment import AlignmentEngine
 
 logger = logging.getLogger(__name__)
 
@@ -123,17 +123,45 @@ class DiarizationService:
         )
         return result.get("segments", [])
 
-    def _get_api_key(self, provider: str = None) -> Optional[str]:
-        """Get API key for the specified provider."""
+    async def _get_api_key(
+        self, provider: str = None, user_email: str = None
+    ) -> Optional[str]:
+        """
+        Get API key for the specified provider.
+        Priority: 1) User-specific key from DB, 2) Environment variable
+        """
         provider = provider or self.provider
 
+        # Try environment variable first (fastest)
+        env_key = None
+        if provider == "deepgram":
+            env_key = os.getenv("DEEPGRAM_API_KEY")
+        elif provider == "assemblyai":
+            env_key = os.getenv("ASSEMBLYAI_API_KEY")
+
+        if env_key:
+            return env_key
+
+        # Fall back to database lookup if user_email provided
+        if user_email:
+            try:
+                from ..db import DatabaseManager
+
+                db = DatabaseManager()
+                db_key = await db.get_api_key(provider, user_email=user_email)
+                if db_key:
+                    return db_key
+            except Exception as e:
+                logger.warning(f"Failed to get API key from database: {e}")
+
+        # Return cached instance variable as final fallback
         if provider == "deepgram":
             return self.deepgram_api_key
         elif provider == "assemblyai":
             return self.assemblyai_api_key
-        else:
-            logger.error(f"Unknown provider: {provider}")
-            return None
+
+        logger.error(f"No API key found for provider: {provider}")
+        return None
 
     async def diarize_meeting(
         self,
@@ -141,6 +169,7 @@ class DiarizationService:
         storage_path: str = "./data/recordings",
         provider: str = None,
         audio_data: bytes = None,
+        user_email: str = None,
     ) -> DiarizationResult:
         """
         Run speaker diarization on a meeting's recorded audio.
@@ -156,6 +185,7 @@ class DiarizationService:
             storage_path: Base path for recordings
             provider: Override default provider
             audio_data: Optional pre-loaded audio bytes (PCM or WAV)
+            user_email: Optional user email for fetching API keys
 
         Returns:
             DiarizationResult with speaker segments
@@ -174,7 +204,7 @@ class DiarizationService:
                 error="Diarization is disabled",
             )
 
-        api_key = self._get_api_key(provider)
+        api_key = await self._get_api_key(provider, user_email)
         if not api_key:
             return DiarizationResult(
                 status="failed",
@@ -418,9 +448,6 @@ class DiarizationService:
             logger.info(
                 f"Reconstructed {len(segments)} natural segments for {meeting_id}"
             )
-            return segments
-
-            logger.info(f"Deepgram returned {len(segments)} speaker segments")
             return segments
 
     async def _diarize_with_assemblyai(

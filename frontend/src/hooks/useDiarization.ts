@@ -4,7 +4,7 @@ import { authFetch } from '@/lib/api';
 
 export interface DiarizationStatus {
   meeting_id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'not_recorded';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'not_recorded' | 'stopped';
   speaker_count?: number;
   provider?: string;
   error?: string;
@@ -89,6 +89,24 @@ export function useDiarization(meetingId: string) {
     }
   };
 
+  const stopDiarization = async () => {
+    try {
+      const response = await authFetch(`/meetings/${meetingId}/diarize/stop`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to stop diarization');
+      }
+
+      await fetchStatus();
+    } catch (err: any) {
+      console.error('Failed to stop diarization:', err);
+      setError(err.message);
+    }
+  };
+
   const renameSpeaker = async (label: string, newName: string) => {
     try {
       const response = await authFetch(`/meetings/${meetingId}/speakers/${label}/rename`, {
@@ -119,6 +137,7 @@ export function useDiarization(meetingId: string) {
     isDiarizing,
     error,
     triggerDiarization,
+    stopDiarization,
     renameSpeaker,
     refreshSpeakers: fetchSpeakers
   };

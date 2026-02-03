@@ -11,6 +11,7 @@ interface TranscriptButtonGroupProps {
   onCopyTranscript: () => void;
   onDownloadRecording: () => Promise<void>;
   onDiarize?: () => void;
+  onStopDiarize?: () => void; // NEW
   diarizationStatus?: string;
   isDiarizing?: boolean;
   isRecording?: boolean;
@@ -22,30 +23,36 @@ export function TranscriptButtonGroup({
   onCopyTranscript,
   onDownloadRecording,
   onDiarize,
+  onStopDiarize,
   diarizationStatus,
   isDiarizing,
   isRecording
 }: TranscriptButtonGroupProps) {
+  const isProcessing = diarizationStatus === 'processing' || isDiarizing;
+
   return (
     <div className="flex items-center justify-between w-full">
       <div className="flex gap-2">
         {onDiarize && (
           <Button
             size="sm"
-            variant={diarizationStatus === 'completed' ? "outline" : (diarizationStatus === 'processing' ? "secondary" : "default")}
-            className={diarizationStatus === 'completed' ? "" : "bg-indigo-600 hover:bg-indigo-700 text-white"}
-            onClick={onDiarize}
-            disabled={isDiarizing || diarizationStatus === 'processing' || isRecording}
+            variant={isProcessing ? "destructive" : (diarizationStatus === 'completed' ? "outline" : "default")}
+            className={isProcessing ? "" : (diarizationStatus === 'completed' ? "" : "bg-indigo-600 hover:bg-indigo-700 text-white")}
+            onClick={isProcessing ? onStopDiarize : onDiarize}
+            disabled={(!isProcessing && isRecording) || (!isProcessing && !onDiarize) || (isProcessing && !onStopDiarize)}
           >
-            {isDiarizing || diarizationStatus === 'processing' ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            {isProcessing ? (
+               // No spinner for Stop button usually, but here we want to show it's working until stopped?
+               // Actually, "Stop" action should be immediate.
+               <Users className="mr-2 h-4 w-4" /> 
             ) : (
-              <Users className="mr-2 h-4 w-4" />
+               <Users className="mr-2 h-4 w-4" />
             )}
             <span className="hidden lg:inline">
-              {diarizationStatus === 'processing' ? 'Identifying...' :
+              {isProcessing ? 'Stop Identification' :
                 (diarizationStatus === 'completed' ? 'Re-identify Speakers' : 
-                 (diarizationStatus === 'failed' ? 'Failed (Retry)' : 'Identify Speakers'))}
+                 (diarizationStatus === 'failed' ? 'Failed (Retry)' : 
+                  (diarizationStatus === 'stopped' ? 'Stopped (Retry)' : 'Identify Speakers')))}
             </span>
           </Button>
         )}

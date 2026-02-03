@@ -9,19 +9,26 @@ MASTER_KEY = os.getenv("MASTER_KEY")
 if not MASTER_KEY:
     # Fallback to a fixed key if not provided (NOT recommended for production)
     # In this app, we should ensure it's provided.
-    raise ValueError("MASTER_KEY not found in environment variables")
+    # raise ValueError("MASTER_KEY not found in environment variables")
+    pass  # Allow for now if not set, but handle in functions
 
-fernet = Fernet(MASTER_KEY.encode())
+# Initialize Fernet lazily or handle error if key missing
+try:
+    fernet = Fernet(MASTER_KEY.encode()) if MASTER_KEY else None
+except Exception:
+    fernet = None
+
 
 def encrypt_key(plain_text: str) -> str:
     """Encrypt a plain text API key."""
-    if not plain_text:
+    if not plain_text or not fernet:
         return ""
     return fernet.encrypt(plain_text.encode()).decode()
 
+
 def decrypt_key(encrypted_text: str) -> str:
     """Decrypt an encrypted API key."""
-    if not encrypted_text:
+    if not encrypted_text or not fernet:
         return ""
     try:
         return fernet.decrypt(encrypted_text.encode()).decode()

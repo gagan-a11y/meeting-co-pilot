@@ -190,7 +190,7 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
 
             // Use configured model or default to Gemini Flash
             const provider = 'gemini';
-            const modelName = 'gemini-2.0-flash';
+            const modelName = 'gemini-2.5-flash';
 
             const contextText = getContextFromTranscripts();
 
