@@ -121,7 +121,7 @@ Search Query:"""
                 return False  # Default to no search if we can't classify
 
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
+            model = genai.GenerativeModel("gemini-2.0-flash")
 
             classifier_prompt = f"""You are a classifier. Determine if this question requires REAL-TIME WEB SEARCH or can be answered from meeting context.
 
@@ -190,102 +190,15 @@ Answer ONLY "SEARCH" or "MEETING":
         )
         return False
 
-    async def _optimize_search_query(
-        self, question: str, user_email: Optional[str] = None
-    ) -> str:
-        """
-        Rewrites a user question into an optimized search engine query.
-        Fixes typos, removes conversational filler, and focuses on keywords.
-        """
-        try:
-            api_key = await self.db.get_api_key("gemini", user_email=user_email)
-            if not api_key:
-                api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-
-            if not api_key:
-                return question
-
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
-
-            prompt = f"""Rewrite the following user question into a single, highly optimized Google search query.
-1. Fix any spelling mistakes or typos.
-2. Remove conversational filler words (e.g., "what is the", "can you tell me").
-3. Focus on the core entities and technical terms.
-4. Return ONLY the query string, nothing else.
-
-User Question: "{question}"
-
-Optimized Search Query:"""
-
-            response = await model.generate_content_async(prompt)
-            optimized = response.text.strip()
-
-            # Sanity check
-            if not optimized or len(optimized) > len(question) * 2:
-                return question
-
-            logger.info(f"Search Query Optimization: '{question}' -> '{optimized}'")
-            return optimized
-
-        except Exception as e:
-            logger.warning(f"Search query optimization failed: {e}")
-            return question
-
     async def search_web(self, query: str, user_email: Optional[str] = None) -> str:
         """
-        Real web search using Tavily + Gemini summarization.
+        Real web search using SerpAPI (Google) + crawling + Gemini summarization.
         """
-        # Step 0: Optimize the query for better search results
-        optimized_query = await self._optimize_search_query(query, user_email)
-        logger.info(f"Real web search for: {optimized_query} (Original: {query})")
-
+        logger.info(f"Real web search for: {query}")
         try:
             import httpx
             import trafilatura
 
-            # Step 1: Search with Tavily (Replaces SerpAPI + Trafilatura)
-            # The previous SerpAPI implementation has been commented out but preserved below.
-
-            try:
-                from tavily import AsyncTavilyClient
-
-                TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-                if not TAVILY_API_KEY:
-                    # Fallback to checking if the user mistakenly kept SERPAPI active without Tavily
-                    return "❌ Tavily API key not configured. Please add TAVILY_API_KEY to your .env file."
-
-                tavily_client = AsyncTavilyClient(api_key=TAVILY_API_KEY)
-
-                # Tavily search returns parsed content, so no separate crawling step is needed
-                tavily_response = await tavily_client.search(
-                    query=optimized_query,
-                    search_depth="basic",
-                    max_results=5,
-                )
-
-                tavily_results = tavily_response.get("results", [])
-                logger.info(f"Tavily found {len(tavily_results)} results")
-
-                sources = []
-                for r in tavily_results:
-                    sources.append(
-                        {
-                            "title": r.get("title", "Unknown"),
-                            "url": r.get("url", ""),
-                            "content": r.get("content", ""),
-                        }
-                    )
-
-                if not sources:
-                    return f"No search results found for '{optimized_query}'."
-
-            except Exception as e:
-                logger.error(f"Tavily search failed: {e}")
-                return f"Web search failed: {str(e)}"
-
-            """
-            # --- LEGACY SERPAPI CODE (Commented Out) ---
             # Step 1: Search Google via SerpAPI
             SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 
@@ -379,8 +292,6 @@ Optimized Search Query:"""
                 ]
 
             logger.info(f"Extracted content from {len(sources)} sources")
-            # --- END LEGACY CODE ---
-            """
 
             # Step 3: Use Gemini to synthesize
             api_key = await self.db.get_api_key("gemini", user_email=user_email)
@@ -398,7 +309,7 @@ Optimized Search Query:"""
             for i, src in enumerate(sources, 1):
                 sources_text += f"\n[Source {i}: {src['title']}]\nURL: {src['url']}\nContent:\n{src['content']}\n---\n"
 
-            prompt = f"""You are a research assistant. Based on the following web sources, provide a comprehensive answer to the query.
+            prompt = f"""You are a research assistant for a meeting copilot. Provide a concise, factual answer to the query based on the web sources provided.
 
 Query: {query}
 
@@ -406,13 +317,17 @@ Web Sources:
 {sources_text}
 
 Instructions:
-1. Synthesize information from the sources provided
-2. Cite sources inline using [Source N] format
-3. Be factual - only use information from the sources
-4. Provide specific data, numbers, and comparisons where available
-5. Format with clear headings and bullet points
+1. Answer the query directly using ONLY information from the provided sources
+2. Do NOT use inline citations (e.g. [Source 1]) in the text.
+3. If sources conflict, acknowledge both perspectives and note the discrepancy
+4. Prioritize recent information and authoritative sources
+5. If sources don't adequately answer the query, clearly state what's missing
+6. Paraphrase information in your own words - do NOT copy text verbatim from sources
+7. Keep the response concise and meeting-appropriate (aim for 150-300 words unless the query requires more detail)
+8. Use formatting sparingly - only use bullet points if listing distinct items; otherwise use clear prose
+9. If asked about current statistics or data, include the date/timeframe from the source
 
-End with a "Sources" section listing all referenced URLs."""
+Format: Provide a direct answer followed by supporting details without inline citations."""
 
             from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
@@ -431,19 +346,7 @@ End with a "Sources" section listing all referenced URLs."""
             )
 
             if response and response.text:
-                final_response = f"**🔍 Web Research Results:**\n\n{response.text}"
-
-                # Manually append sources to ensure they are always visible
-                if sources:
-                    final_response += "\n\n**Sources:**"
-                    for i, src in enumerate(sources, 1):
-                        title = (
-                            src["title"].replace("[", "(").replace("]", ")")
-                        )  # Escape brackets
-                        url = src["url"]
-                        final_response += f"\n{i}. [{title}]({url})"
-
-                return final_response
+                return f"**🔍 Web Research Results:**\n\n{response.text}"
             else:
                 return "Failed to generate summary from sources."
 
