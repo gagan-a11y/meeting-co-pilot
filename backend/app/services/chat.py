@@ -199,6 +199,48 @@ Answer ONLY "SEARCH" or "MEETING":
             import httpx
             import trafilatura
 
+            # Step 1: Search with Tavily (Replaces SerpAPI + Trafilatura)
+            # The previous SerpAPI implementation has been commented out but preserved below.
+
+            try:
+                from tavily import AsyncTavilyClient
+
+                TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+                if not TAVILY_API_KEY:
+                    # Fallback to checking if the user mistakenly kept SERPAPI active without Tavily
+                    return "❌ Tavily API key not configured. Please add TAVILY_API_KEY to your .env file."
+
+                tavily_client = AsyncTavilyClient(api_key=TAVILY_API_KEY)
+
+                # Tavily search returns parsed content, so no separate crawling step is needed
+                tavily_response = await tavily_client.search(
+                    query=query,
+                    search_depth="basic",
+                    max_results=5,
+                )
+
+                tavily_results = tavily_response.get("results", [])
+                logger.info(f"Tavily found {len(tavily_results)} results")
+
+                sources = []
+                for r in tavily_results:
+                    sources.append(
+                        {
+                            "title": r.get("title", "Unknown"),
+                            "url": r.get("url", ""),
+                            "content": r.get("content", ""),
+                        }
+                    )
+
+                if not sources:
+                    return f"No search results found for '{query}'."
+
+            except Exception as e:
+                logger.error(f"Tavily search failed: {e}")
+                return f"Web search failed: {str(e)}"
+
+            """
+            # --- LEGACY SERPAPI CODE (Commented Out) ---
             # Step 1: Search Google via SerpAPI
             SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 
@@ -292,6 +334,8 @@ Answer ONLY "SEARCH" or "MEETING":
                 ]
 
             logger.info(f"Extracted content from {len(sources)} sources")
+            # --- END LEGACY CODE ---
+            """
 
             # Step 3: Use Gemini to synthesize
             api_key = await self.db.get_api_key("gemini", user_email=user_email)
