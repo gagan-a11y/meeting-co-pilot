@@ -85,7 +85,20 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
                 audio_data = await af.read()
         else:
             logger.info(f"🧩 Merging live audio chunks for {meeting_id}")
+            # Try basic merge first
             audio_data = await AudioRecorder.merge_chunks(meeting_id, storage_path)
+
+            # If basic merge failed (e.g. metadata missing), try harder
+            if not audio_data:
+                logger.warning(
+                    f"Standard merge returned None, checking for raw chunks..."
+                )
+                chunk_dir = Path(storage_path) / meeting_id
+                if chunk_dir.exists() and list(chunk_dir.glob("chunk_*.pcm")):
+                    logger.info("Found orphan chunks, retrying merge...")
+                    audio_data = await AudioRecorder.merge_chunks(
+                        meeting_id, storage_path
+                    )
 
         if not audio_data:
             raise ValueError(
@@ -162,10 +175,12 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
             ) = await diarization_service.align_with_transcripts(
                 meeting_id,
                 result,
-                whisper_segments if whisper_segments else [
+                whisper_segments
+                if whisper_segments
+                else [
                     {"start": s.start_time, "end": s.end_time, "text": s.text}
                     for s in result.segments
-                ]
+                ],
             )
 
             # Step D: Save to DB
@@ -174,13 +189,15 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
                     # 1. Clear old transcripts
                     await conn.execute(
                         "DELETE FROM transcript_segments WHERE meeting_id = $1",
-                        meeting_id
+                        meeting_id,
                     )
 
                     # 2. Insert new aligned segments
                     for t in final_segments:
                         start_val = t.get("start", 0)
-                        timestamp_str = f"({int(start_val // 60):02d}:{int(start_val % 60):02d})"
+                        timestamp_str = (
+                            f"({int(start_val // 60):02d}:{int(start_val % 60):02d})"
+                        )
 
                         await conn.execute(
                             """
@@ -199,7 +216,7 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
                             "diarized",
                             t.get("speaker", "Speaker 0"),
                             t.get("speaker_confidence", 1.0),
-                            t.get("alignment_state")
+                            t.get("alignment_state"),
                         )
 
                     # 3. Save Version (Always create a new version as per user request)

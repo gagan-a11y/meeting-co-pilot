@@ -1059,6 +1059,8 @@ async def get_transcript_version_content(
             f"Error getting transcript version content: {str(e)}", exc_info=True
         )
         raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/meetings/{meeting_id}/versions/{version_num}")
 async def delete_transcript_version(
     meeting_id: str, version_num: int, current_user: User = Depends(get_current_user)
@@ -1077,6 +1079,7 @@ async def delete_transcript_version(
     except Exception as e:
         logger.error(f"Error deleting transcript version: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/process-transcript")
 async def process_transcript_api(

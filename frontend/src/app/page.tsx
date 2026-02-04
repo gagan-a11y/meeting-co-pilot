@@ -260,7 +260,7 @@ export default function Home() {
     claude: ['claude-3-5-sonnet-latest'],
     groq: ['llama-3.3-70b-versatile'],
     openrouter: [],
-    gemini: ['gemini-1.5-flash', 'gemini-2.5-flash'],
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-flash'],
     openai: ['gpt-4o', 'gpt-4-turbo'],
   };
 

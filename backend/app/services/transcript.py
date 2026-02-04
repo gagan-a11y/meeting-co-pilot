@@ -55,6 +55,23 @@ class TranscriptService:
             text = text[:-3]
         return text.strip()
 
+    def _clean_transcript_text(self, text: str) -> str:
+        """
+        Clean common frontend artifacts from transcript text.
+        Specifically removes 'undefined' prefixes caused by JS interpolation bugs.
+        """
+        if not text:
+            return ""
+
+        # Remove 'undefined' if it appears at the start of lines or text
+        cleaned = text.replace("undefined ", "")
+
+        # Also fix specific patterns seen in logs
+        cleaned = cleaned.replace("**Speaker 0:** undefined", "**Speaker 0:**")
+        cleaned = cleaned.replace("**Unknown:** undefined", "**Unknown:**")
+
+        return cleaned
+
     async def process_transcript(
         self,
         text: str,
@@ -68,6 +85,8 @@ class TranscriptService:
         """
         Process transcript text into chunks and generate structured summaries for each chunk using an AI model.
         """
+        # CLEANUP: Remove artifacts before processing
+        text = self._clean_transcript_text(text)
 
         logger.info(
             f"Processing transcript (length {len(text)}) with model provider={model}, model_name={model_name}, chunk_size={chunk_size}, overlap={overlap}"
@@ -123,12 +142,14 @@ class TranscriptService:
                     # Prioritize GEMINI_API_KEY over GOOGLE_API_KEY
                     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
                 if not api_key:
-                    raise ValueError("Gemini API key not found. Set GEMINI_API_KEY environment variable.")
+                    raise ValueError(
+                        "Gemini API key not found. Set GEMINI_API_KEY environment variable."
+                    )
 
                 import google.generativeai as genai
 
                 genai.configure(api_key=api_key)
-                # Use gemini-2.5-flash for speed and large context
+                # Use gemini-2.5-flash for speed and large context (Default)
                 model_name = model_name or "gemini-2.5-flash"
                 llm = genai.GenerativeModel(model_name)
                 logger.info(f"Using Gemini model: {model_name}")
@@ -182,12 +203,47 @@ class TranscriptService:
                             You must output a JSON object that strictly adheres to the following schema:
                             {schema_desc}
 
+                            ONE-SHOT EXAMPLE FOR YOUR GUIDANCE:
+                            If the transcript was: "Speaker 0: Rahul will work on backend. Priya will handle frontend."
+                            Your output should look like this:
+                            {{
+                                "MeetingName": "Development Sync",
+                                "People": {{ "present": ["Rahul", "Priya"], "absent": [] }},
+                                "SessionSummary": {{
+                                    "title": "Summary",
+                                    "blocks": [
+                                        {{ "id": "1", "type": "text", "content": "The team discussed backend and frontend assignments.", "color": "" }}
+                                    ]
+                                }},
+                                "ImmediateActionItems": {{
+                                    "title": "Action Items",
+                                    "blocks": [
+                                        {{ "id": "2", "type": "bullet", "content": "Rahul: Work on backend architecture", "color": "blue" }},
+                                        {{ "id": "3", "type": "bullet", "content": "Priya: Handle frontend integration", "color": "blue" }}
+                                    ]
+                                }},
+                                "MeetingNotes": {{
+                                    "sections": [
+                                        {{
+                                            "title": "Task Allocation",
+                                            "blocks": [
+                                                {{ "id": "4", "type": "bullet", "content": "Backend task assigned to Rahul.", "color": "" }},
+                                                {{ "id": "5", "type": "bullet", "content": "Frontend task assigned to Priya.", "color": "" }}
+                                            ]
+                                        }}
+                                    ]
+                                }}
+                            }}
+
                             IMPORTANT GUIDELINES:
                             1. Return ONLY valid JSON.
-                            2. For 'MeetingNotes', organize content into logical 'sections', each with a 'title' and a list of 'blocks'.
-                            3. 'blocks' must have 'type' (bullet, text, heading1, heading2) and 'content'.
-                            4. Extract specific actionable items for 'ImmediateActionItems'.
-                            5. 'MeetingName' should be a concise title for the meeting.
+                            2. NEVER return empty 'blocks' arrays if there is relevant information in the transcript.
+                            3. For 'MeetingNotes', organize content into logical 'sections', each with a 'title' and a list of 'blocks'.
+                            4. 'blocks' must have 'type' (bullet, text, heading1, heading2) and 'content'.
+                            5. Extract specific actionable items for 'ImmediateActionItems'. 
+                            6. If someone is mentioned as doing something, it MUST be in 'ImmediateActionItems'.
+                            7. 'MeetingName' should be a concise title for the meeting.
+                            8. Capture ALL relevant points. Do not omit information.
                             
                             Transcript Chunk:
                             ---

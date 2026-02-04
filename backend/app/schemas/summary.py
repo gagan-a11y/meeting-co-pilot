@@ -22,24 +22,25 @@ class MeetingNotes(BaseModel):
     """Represents the meeting notes"""
 
     meeting_name: str
-    sections: List[Section]
+    sections: List[Section] = []
 
 
 class People(BaseModel):
     """Represents the people in the meeting."""
 
     title: str
-    blocks: List[Block]
+    blocks: List[Block] = []
 
 
 class SummaryResponse(BaseModel):
     """Represents the meeting summary response based on a section of the transcript"""
 
-    MeetingName: str
-    People: People
-    SessionSummary: Section
-    CriticalDeadlines: Section
-    KeyItemsDecisions: Section
-    ImmediateActionItems: Section
-    NextSteps: Section
-    MeetingNotes: MeetingNotes
+    MeetingName: Optional[str] = "Untitled Meeting"
+    # Using forward references as string because classes are defined above but referenced here
+    People: Optional["People"] = None
+    SessionSummary: Optional[Section] = None
+    CriticalDeadlines: Optional[Section] = None
+    KeyItemsDecisions: Optional[Section] = None
+    ImmediateActionItems: Optional[Section] = None
+    NextSteps: Optional[Section] = None
+    MeetingNotes: Optional["MeetingNotes"] = None

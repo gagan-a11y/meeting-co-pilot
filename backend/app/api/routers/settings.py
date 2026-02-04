@@ -45,6 +45,19 @@ async def get_model_config(current_user: User = Depends(get_current_user)):
     """Get the model configuration"""
     config = await db.get_model_config()
     if config:
+        # HOTFIX: Migrate users away from non-existent gemini-2.5/2.0 models
+        if config.get("model", "").startswith("gemini-2."):
+            logger.info(
+                f"Migrating deprecated model {config['model']} to gemini-2.5-flash"
+            )
+            config["model"] = "gemini-2.5-flash"
+            # Optionally update DB to persist this fix
+            await db.save_model_config(
+                config["provider"],
+                "gemini-2.5-flash",
+                config.get("whisperModel", "large-v3"),
+            )
+
         # Check if user has a personal API key for the provider
         user_key = await db.get_user_api_key(current_user.email, config["provider"])
         if user_key:

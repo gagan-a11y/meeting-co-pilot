@@ -37,28 +37,30 @@ class StreamingTranscriptionManager:
         """
         self.groq = GroqTranscriptionClient(groq_api_key)
 
-        # VAD Initialization Strategy: TenVAD > SileroVAD > SimpleVAD
+        # VAD Initialization Strategy: ONLY TenVAD
         self.vad = None
 
-        # 1. Try TenVAD (High Performance C++)
+        # 1. TenVAD (High Performance C++) - STRICT enforcement
         try:
-            self.vad = TenVAD(threshold=0.3)
-            logger.info("✅ Using TenVAD (C++ based)")
+            self.vad = TenVAD(threshold=0.5)
+            logger.info("✅ Using TenVAD (C++ based) with threshold 0.5")
         except Exception as e:
-            logger.warning(f"⚠️ TenVAD failed to load: {e}")
+            logger.error(f"❌ TenVAD failed to load: {e}")
+            raise RuntimeError("TenVAD is required but failed to load. Aborting.")
 
+        # COMMENTED OUT: No fallbacks allowed per user request
         # 2. Try SileroVAD (ML based, PyTorch)
-        if self.vad is None:
-            try:
-                self.vad = SileroVAD(threshold=0.3)
-                logger.info("✅ Using SileroVAD (ML-based)")
-            except Exception as e:
-                logger.warning(f"⚠️ SileroVAD failed to load: {e}")
+        # if self.vad is None:
+        #     try:
+        #         self.vad = SileroVAD(threshold=0.3)
+        #         logger.info("✅ Using SileroVAD (ML-based)")
+        #     except Exception as e:
+        #         logger.warning(f"⚠️ SileroVAD failed to load: {e}")
 
         # 3. Fallback to SimpleVAD (Amplitude based)
-        if self.vad is None:
-            self.vad = SimpleVAD(threshold=0.08)
-            logger.info("ℹ️ Using SimpleVAD (Fallback)")
+        # if self.vad is None:
+        #     self.vad = SimpleVAD(threshold=0.08)
+        #     logger.info("ℹ️ Using SimpleVAD (Fallback)")
 
         # IMPROVED: Optimized for real-time responsiveness
         # 6s window provides enough context for grammar, but is short enough to fail fast
@@ -106,7 +108,9 @@ class StreamingTranscriptionManager:
         self.silence_threshold_ms = 1000  # 1.0s silence → finalize
         self.max_buffer_duration_ms = 6000  # 6s max → force finalize (matches window)
         self.punctuation_min_duration_ms = 2000  # Punctuation + 2s → finalize
-        self.min_transcription_interval = 3.0  # Check every 3.0s (less frequency to avoid Groq 429)
+        self.min_transcription_interval = (
+            3.0  # Check every 3.0s (less frequency to avoid Groq 429)
+        )
 
         logger.info(
             "✅ StreamingTranscriptionManager initialized (SMART TIMER: 1.0s silence, 6s max)"

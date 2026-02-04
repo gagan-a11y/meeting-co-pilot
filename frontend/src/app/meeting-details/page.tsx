@@ -62,8 +62,8 @@ function MeetingDetailsContent() {
         return;
       }
 
-      // ✅ STEP 3: DB is empty - apply Gemini 2.5 Flash as default
-      console.log('💾 DB empty, using Gemini 2.5 Flash as initial default');
+      // ✅ STEP 3: DB is empty - apply Gemini 1.5 Flash as default
+      console.log('💾 DB empty, using Gemini 1.5 Flash as initial default');
 
       await authFetch('/save-model-config', {
         method: 'POST',

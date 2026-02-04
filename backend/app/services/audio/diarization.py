@@ -238,9 +238,25 @@ class DiarizationService:
                         audio_data = await f.read()
                 else:
                     # Fallback to merging chunks
+                    logger.info(
+                        f"⚠️ Merged audio missing for {meeting_id}, attempting to merge chunks locally..."
+                    )
                     audio_data = await AudioRecorder.merge_chunks(
                         meeting_id, storage_path
                     )
+
+            # If still no audio, check for any chunks and try harder
+            if not audio_data:
+                recording_dir = Path(storage_path) / meeting_id
+                if recording_dir.exists():
+                    chunks = list(recording_dir.glob("chunk_*.pcm"))
+                    if chunks:
+                        logger.info(
+                            f"⚠️ explicit chunk merge triggered for {len(chunks)} chunks"
+                        )
+                        audio_data = await AudioRecorder.merge_chunks(
+                            meeting_id, storage_path
+                        )
 
             if not audio_data:
                 return DiarizationResult(
@@ -688,6 +704,10 @@ class DiarizationService:
         for t in transcripts:
             speaker = t.get("speaker", "Unknown")
             text = t.get("text", "").strip()
+
+            # CLEANUP: Remove 'undefined' prefix if present
+            if text.startswith("undefined "):
+                text = text[10:]  # Remove 'undefined '
 
             if not text:
                 continue
