@@ -190,11 +190,56 @@ Answer ONLY "SEARCH" or "MEETING":
         )
         return False
 
+    async def _optimize_search_query(
+        self, question: str, user_email: Optional[str] = None
+    ) -> str:
+        """
+        Rewrites a user question into an optimized search engine query.
+        Fixes typos, removes conversational filler, and focuses on keywords.
+        """
+        try:
+            api_key = await self.db.get_api_key("gemini", user_email=user_email)
+            if not api_key:
+                api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+            if not api_key:
+                return question
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+
+            prompt = f"""Rewrite the following user question into a single, highly optimized Google search query.
+1. Fix any spelling mistakes or typos.
+2. Remove conversational filler words (e.g., "what is the", "can you tell me").
+3. Focus on the core entities and technical terms.
+4. Return ONLY the query string, nothing else.
+
+User Question: "{question}"
+
+Optimized Search Query:"""
+
+            response = await model.generate_content_async(prompt)
+            optimized = response.text.strip()
+
+            # Sanity check
+            if not optimized or len(optimized) > len(question) * 2:
+                return question
+
+            logger.info(f"Search Query Optimization: '{question}' -> '{optimized}'")
+            return optimized
+
+        except Exception as e:
+            logger.warning(f"Search query optimization failed: {e}")
+            return question
+
     async def search_web(self, query: str, user_email: Optional[str] = None) -> str:
         """
-        Real web search using SerpAPI (Google) + crawling + Gemini summarization.
+        Real web search using Tavily + Gemini summarization.
         """
-        logger.info(f"Real web search for: {query}")
+        # Step 0: Optimize the query for better search results
+        optimized_query = await self._optimize_search_query(query, user_email)
+        logger.info(f"Real web search for: {optimized_query} (Original: {query})")
+
         try:
             import httpx
             import trafilatura
@@ -214,7 +259,7 @@ Answer ONLY "SEARCH" or "MEETING":
 
                 # Tavily search returns parsed content, so no separate crawling step is needed
                 tavily_response = await tavily_client.search(
-                    query=query,
+                    query=optimized_query,
                     search_depth="basic",
                     max_results=5,
                 )
@@ -233,7 +278,7 @@ Answer ONLY "SEARCH" or "MEETING":
                     )
 
                 if not sources:
-                    return f"No search results found for '{query}'."
+                    return f"No search results found for '{optimized_query}'."
 
             except Exception as e:
                 logger.error(f"Tavily search failed: {e}")
@@ -386,7 +431,19 @@ End with a "Sources" section listing all referenced URLs."""
             )
 
             if response and response.text:
-                return f"**🔍 Web Research Results:**\n\n{response.text}"
+                final_response = f"**🔍 Web Research Results:**\n\n{response.text}"
+
+                # Manually append sources to ensure they are always visible
+                if sources:
+                    final_response += "\n\n**Sources:**"
+                    for i, src in enumerate(sources, 1):
+                        title = (
+                            src["title"].replace("[", "(").replace("]", ")")
+                        )  # Escape brackets
+                        url = src["url"]
+                        final_response += f"\n{i}. [{title}]({url})"
+
+                return final_response
             else:
                 return "Failed to generate summary from sources."
 
