@@ -656,6 +656,7 @@ class DatabaseManager:
                     SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker, speaker_confidence, source, alignment_state
                     FROM transcript_segments
                     WHERE meeting_id = $1
+                      AND (source IS NULL OR source != 'diarized')
                     ORDER BY id ASC
                 """,
                     meeting_id,

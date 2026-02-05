@@ -111,8 +111,8 @@ async def delete_meeting(
         # Delete audio file from Storage (Local or GCP)
         try:
             await StorageService.delete_file(f"{data.meeting_id}/recording.wav")
-            # Also try deleting any potential source uploads or chunks if we knew their names
-            # But the recording.wav is the main one.
+            # Remove any remaining artifacts under the meeting prefix (chunks, metadata, etc.)
+            await StorageService.delete_prefix(f"{data.meeting_id}/")
         except Exception as e:
             logger.warning(f"Failed to delete audio file for {data.meeting_id}: {e}")
 

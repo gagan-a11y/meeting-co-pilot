@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { Transcript } from '@/types';
 import { useEffect, useRef, useState } from 'react';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
@@ -161,14 +162,14 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
   const [speechDetected, setSpeechDetected] = useState(false);
 
   // Debug: Log the props to understand what's happening
-  console.log('TranscriptView render:', {
-    isRecording,
-    isPaused,
-    isProcessing,
-    isStopping,
-    transcriptCount: transcripts.length,
-    shouldShowListening: !isStopping && isRecording && !isPaused && !isProcessing && transcripts.length > 0
-  });
+  // console.log('TranscriptView render:', {
+  //   isRecording,
+  //   isPaused,
+  //   isProcessing,
+  //   isStopping,
+  //   transcriptCount: transcripts.length,
+  //   shouldShowListening: !isStopping && isRecording && !isPaused && !isProcessing && transcripts.length > 0
+  // });
 
   // Streaming effect state
   const [streamingTranscript, setStreamingTranscript] = useState<{
@@ -286,80 +287,80 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
 
       {transcripts?.map((transcript, index) => {
         // Check if speaker changed from previous transcript
-        const prevTranscript = index > 0 ? transcripts[index - 1] : null;
-        const showSpeaker = transcript.speaker && (index === 0 || prevTranscript?.speaker !== transcript.speaker);
-        const speakerName = speakerMap[transcript.speaker || ''] || transcript.speaker;
+        const prevTranscript: Transcript | null = index > 0 ? transcripts[index - 1] : null;
+        const showSpeaker: boolean = transcript.speaker && (index === 0 || prevTranscript?.speaker !== transcript.speaker);
+        const speakerName: string = speakerMap[transcript.speaker || ''] || transcript.speaker;
 
-        const isStreaming = streamingTranscript?.id === transcript.id;
-        const textToShow = isStreaming ? streamingTranscript.visibleText : transcript.text;
-        const filteredText = cleanStopWords(textToShow);
-        const originalWasEmpty = transcript.text.trim() === '';
-        const displayText = originalWasEmpty && !isStreaming ? '[Silence]' : filteredText;
+        const isStreaming: boolean = streamingTranscript?.id === transcript.id;
+        const textToShow: string = isStreaming ? streamingTranscript.visibleText : transcript.text;
+        const filteredText: string = cleanStopWords(textToShow);
+        const originalWasEmpty: boolean = transcript.text.trim() === '';
+        const displayText: string = originalWasEmpty && !isStreaming ? '[Silence]' : filteredText;
 
-        const sizerText = cleanStopWords(isStreaming ? streamingTranscript.fullText : transcript.text)
+        const sizerText: string = cleanStopWords(isStreaming ? streamingTranscript.fullText : transcript.text)
           || (originalWasEmpty && !isStreaming ? '[Silence]' : '');
 
         return (
           <motion.div
-            key={transcript.id ? `${transcript.id}-${index}` : `transcript-${index}`}
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.15 }}
-            className="mb-3"
+        key={transcript.id ? `${transcript.id}-${index}` : `transcript-${index}`}
+        initial={{ opacity: 0, y: 5 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.15 }}
+        className="mb-3"
           >
-            <div className="flex items-start gap-2">
-              <Tooltip>
-                <TooltipTrigger>
-                  <span className="text-xs text-gray-400 mt-1 flex-shrink-0 min-w-[50px]">
-                    {isRecording 
-                      ? formatISTTime(transcript.timestamp)
-                      : (transcript.audio_start_time != null 
-                        ? formatRecordingTime(transcript.audio_start_time) 
-                        : formatISTTime(transcript.timestamp))}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {transcript.duration != null && (
-                    <span className="text-xs text-gray-400">
-                      {transcript.duration.toFixed(1)}s
-                      {transcript.confidence != null && (
-                        <ConfidenceIndicator
-                          confidence={transcript.confidence}
-                          showIndicator={showConfidence}
-                        />
-                      )}
-                    </span>
-                  )}
-                </TooltipContent>
-              </Tooltip>
-              <div className="flex-1">
-                {/* Speaker Label (Group Header) */}
-                {showSpeaker && (
-                  <div className={`text-xs font-semibold mb-1 ${getSpeakerColor(transcript.speaker || '')}`}>
-                    {speakerName}
-                  </div>
-                )}
+        <div className="flex items-start gap-2">
+          <Tooltip>
+            <TooltipTrigger>
+          <span className="text-xs text-gray-400 mt-1 flex-shrink-0 min-w-[50px]">
+            {isRecording 
+              ? formatISTTime(transcript.timestamp)
+              : (transcript.audio_start_time != null 
+            ? formatRecordingTime(transcript.audio_start_time) 
+            : formatISTTime(transcript.timestamp))}
+          </span>
+            </TooltipTrigger>
+            <TooltipContent>
+          {transcript.duration != null && (
+            <span className="text-xs text-gray-400">
+              {transcript.duration.toFixed(1)}s
+              {transcript.confidence != null && (
+            <ConfidenceIndicator
+              confidence={transcript.confidence}
+              showIndicator={showConfidence}
+            />
+              )}
+            </span>
+          )}
+            </TooltipContent>
+          </Tooltip>
+          <div className="flex-1">
+            {/* Speaker Label (Group Header) */}
+            {showSpeaker && (
+          <div className={`text-xs font-semibold mb-1 ${getSpeakerColor(transcript.speaker || '')}`}>
+            {speakerName}
+          </div>
+            )}
 
-                {isStreaming ? (
-                  // Streaming transcript - show in bubble (full width)
-                  <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
-                    <p className="text-base text-gray-800 leading-relaxed">
-                      {displayText}
-                    </p>
-                  </div>
-                ) : (
-                  // Regular transcript - direct text for easy copy-paste
-                  <div className="text-base text-gray-800 leading-relaxed">
-                    {transcript.speaker && (
-                      <span className={`font-semibold mr-1 ${getSpeakerColor(transcript.speaker)}`}>
-                        {speakerName}:
-                      </span>
-                    )}
-                    <span>{displayText}</span>
-                  </div>
-                )}
-              </div>
-            </div>
+            {isStreaming ? (
+          // Streaming transcript - show in bubble (full width)
+          <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
+            <p className="text-base text-gray-800 leading-relaxed">
+              {displayText}
+            </p>
+          </div>
+            ) : (
+          // Regular transcript - direct text for easy copy-paste
+          <div className="text-base text-gray-800 leading-relaxed">
+            {transcript.speaker && (
+              <span className={`font-semibold mr-1 ${getSpeakerColor(transcript.speaker)}`}>
+            {speakerName}:
+              </span>
+            )}
+            <span>{displayText}</span>
+          </div>
+            )}
+          </div>
+        </div>
           </motion.div>
         );
       })}

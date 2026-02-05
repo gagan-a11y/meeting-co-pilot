@@ -29,10 +29,6 @@ interface SpeakerMap {
   [label: string]: string;
 }
 
-interface SpeechDetectedEvent {
-  message: string;
-}
-
 interface TranscriptViewProps {
   transcripts: Transcript[];
   isRecording?: boolean;
@@ -202,17 +198,15 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
   speakerMap = {},
   forceShowSpeakers = false
 }) => {
-  const [speechDetected, setSpeechDetected] = useState(false);
-
   // Debug: Log the props to understand what's happening
-  console.log('TranscriptView render:', {
-    isRecording,
-    isPaused,
-    isProcessing,
-    isStopping,
-    transcriptCount: transcripts.length,
-    shouldShowListening: !isStopping && isRecording && !isPaused && !isProcessing && transcripts.length > 0
-  });
+  // console.log('TranscriptView render:', {
+  //   isRecording,
+  //   isPaused,
+  //   isProcessing,
+  //   isStopping,
+  //   transcriptCount: transcripts.length,
+  //   shouldShowListening: !isStopping && isRecording && !isPaused && !isProcessing && transcripts.length > 0
+  // });
 
   // Streaming effect state
   const [streamingTranscript, setStreamingTranscript] = useState<{
@@ -220,7 +214,7 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
     visibleText: string;
     fullText: string;
   } | null>(null);
-  const streamingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const streamingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastStreamedIdRef = useRef<string | null>(null); // Track which transcript we've streamed
 
   // Load preference for showing confidence indicator
@@ -242,11 +236,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
     window.addEventListener('confidenceIndicatorChanged', handleConfidenceChange);
     return () => window.removeEventListener('confidenceIndicatorChanged', handleConfidenceChange);
   }, []);
-
-  // Listen for speech-detected event
-  useEffect(() => {
-    setSpeechDetected(false);
-  }, [isRecording]);
 
   // Streaming effect: animate new transcripts character-by-character
   useEffect(() => {
@@ -371,9 +360,6 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
         const originalText = transcript.text || ''; // Default to empty string if undefined
         const originalWasEmpty = originalText.trim() === '';
         const displayText = originalWasEmpty && !isStreaming ? '[Silence]' : filteredText;
-
-        const sizerText = cleanStopWords(isStreaming ? streamingTranscript.fullText : originalText)
-          || (originalWasEmpty && !isStreaming ? '[Silence]' : '');
 
         const segmentStyle = getSegmentStyle(transcript.alignment_state, transcript.source);
 

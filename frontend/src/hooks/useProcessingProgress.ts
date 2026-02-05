@@ -150,7 +150,7 @@ export function useProcessingProgress() {
   // Pause processing
   const pauseProcessing = useCallback(() => {
     if (session) {
-      setSession(prev => prev ? { ...prev, is_paused: true } : null);
+      setSession(prev => prev ? { ...prev, is_paused: true } : null);      
       console.log('Processing paused');
     }
   }, [session]);
