@@ -97,7 +97,12 @@ export function useCopyOperations({
             if (section && typeof section === 'object' && 'title' in section && 'blocks' in section) {
               const sectionTitle = `## ${section.title}\n\n`;
               const sectionContent = section.blocks
-                .map((block: any) => `- ${block.content}`)
+                .map((block: any) => {
+                  if (block.type === 'bullet') return `- ${block.content}`;
+                  if (block.type === 'heading1') return `### ${block.content}\n`;
+                  if (block.type === 'heading2') return `#### ${block.content}\n`;
+                  return block.content;
+                })
                 .join('\n');
               return sectionTitle + sectionContent;
             }
@@ -132,7 +137,19 @@ export function useCopyOperations({
         minute: '2-digit'
       })}\n\n---\n\n`;
 
-      const fullMarkdown = header + metadata + summaryMarkdown;
+      // If summaryMarkdown already has a title that matches meetingTitle, 
+      // we might want to avoid double titles, but having the metadata is good.
+      // Let's check if the first line of summaryMarkdown is a level 1 heading
+      const cleanedSummary = summaryMarkdown.trim();
+      const hasTitle = cleanedSummary.startsWith('# ');
+      
+      let fullMarkdown = '';
+      if (hasTitle) {
+        // If it has its own title, put metadata AFTER the title if possible, or just BEFORE everything
+        fullMarkdown = metadata + summaryMarkdown;
+      } else {
+        fullMarkdown = header + metadata + summaryMarkdown;
+      }
       await navigator.clipboard.writeText(fullMarkdown);
 
       console.log('✅ Successfully copied to clipboard!');

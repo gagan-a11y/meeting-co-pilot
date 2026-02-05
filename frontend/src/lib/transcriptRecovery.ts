@@ -10,6 +10,7 @@ export interface PendingMeetingData {
   transcripts: Transcript[];
   timestamp: number; // when it was saved locally
   templateId?: string;
+  sessionId?: string | null; // ID of the audio recording session
 }
 
 class TranscriptRecoveryService {

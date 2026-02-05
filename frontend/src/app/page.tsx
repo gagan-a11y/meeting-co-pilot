@@ -106,6 +106,7 @@ export default function Home() {
   // State for web audio recording
   // State for web audio recording
   const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   // Recovery State
@@ -131,6 +132,7 @@ export default function Home() {
 
           // Don't set 'recovery' ID to avoid blocking recording controls
           // Just treat it as loaded state ready to append
+          setCurrentSessionId(latest.sessionId || null);
 
           toast.success('Session Restored', {
             description: 'Your meeting context has been automatically restored.'
@@ -142,7 +144,8 @@ export default function Home() {
             action: {
               label: 'Recover',
               onClick: () => handleRecoverTranscripts(latest)
-            }
+            },
+            duration: 10000,
           });
         }
       }
@@ -155,6 +158,7 @@ export default function Home() {
     setTranscripts(data.transcripts);
     setCurrentMeeting({ id: 'recovery', title: data.title });
     setPendingRecoveryId(data.meetingId);
+    setCurrentSessionId(data.sessionId || null);
     toast.success('Restored unsaved meeting', { description: 'Please try saving again.' });
   };
 
@@ -173,7 +177,8 @@ export default function Home() {
           title: meetingTitle || 'Untitled Meeting',
           transcripts: transcripts,
           timestamp: Date.now(),
-          templateId: defaultTemplate
+          templateId: defaultTemplate,
+          sessionId: currentSessionId
         });
         if (!pendingRecoveryId) {
           setPendingRecoveryId(recoveryId);
@@ -260,7 +265,7 @@ export default function Home() {
     claude: ['claude-3-5-sonnet-latest'],
     groq: ['llama-3.3-70b-versatile'],
     openrouter: [],
-    gemini: ['gemini-2.5-flash', 'gemini-2.5-flash'],
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
     openai: ['gpt-4o', 'gpt-4-turbo'],
   };
 
@@ -397,6 +402,7 @@ export default function Home() {
 
 
 
+  /*
   useEffect(() => {
     const loadModels = async () => {
       try {
@@ -427,7 +433,9 @@ export default function Home() {
 
     loadModels();
   }, []);
+  */
 
+  /*
   const formatSize = (size: number): string => {
     if (size < 1024) {
       return `${size} B`;
@@ -439,6 +447,7 @@ export default function Home() {
       return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
     }
   };
+  */
 
   const handleRecordingStart = async () => {
     try {
@@ -452,7 +461,13 @@ export default function Home() {
       const minutes = String(now.getMinutes()).padStart(2, '0');
       const seconds = String(now.getSeconds()).padStart(2, '0');
       const randomTitle = `Meeting ${day}_${month}_${year}_${hours}_${minutes}_${seconds}`;
-      setMeetingTitle(randomTitle);
+
+      // Only set new title if we are NOT recovering/resuming
+      // If pendingRecoveryId exists, we want to keep the restored title
+      // If currentSessionId exists, we are resuming an active session
+      if (!pendingRecoveryId && !currentSessionId && meetingTitle === '+ New Call') {
+        setMeetingTitle(randomTitle);
+      }
 
       // Update state
       console.log('Setting recording state to true');
@@ -461,13 +476,18 @@ export default function Home() {
       // If this is a restored session or we have existing transcripts, we are RESUMING
       // We must ensure new transcripts don't collide with old ones
       if (transcripts.length > 0) {
-        console.log('[Recording] Resuming existing session. Archiving previous transcripts...');
-        // Invalidate sequence IDs of existing transcripts to prevent collision with new stream (which starts at 0)
-        setTranscripts(prev => prev.map(t => ({
-          ...t,
-          sequence_id: -1 // Mark as "historical" so handleTranscriptReceived won't dedup against new 0
-        })));
-        setIsRestoredSession(false);
+        if (currentSessionId && !pendingRecoveryId) {
+          console.log('[Recording] Resuming existing session with ID:', currentSessionId);
+          setIsRestoredSession(true); // Keep strictly true to indicate continuation
+        } else {
+          console.log('[Recording] Starting new session. Archiving previous transcripts...');
+          // Invalidate sequence IDs of existing transcripts to prevent collision with new stream (which starts at 0)
+          setTranscripts(prev => prev.map(t => ({
+            ...t,
+            sequence_id: -1 // Mark as "historical" so handleTranscriptReceived won't dedup against new 0
+          })));
+          setIsRestoredSession(false);
+        }
       } else {
         setTranscripts([]); // Clear previous transcripts only if starting fresh
       }
@@ -632,6 +652,7 @@ export default function Home() {
   const handleRecordingStop = async (success: boolean = true) => {
     // Immediately update UI state to reflect that recording has stopped
     setIsRecording(false);
+    setIsPaused(false);
     setIsRecordingDisabled(false);
 
     if (success) {
@@ -1488,7 +1509,7 @@ export default function Home() {
                 <TranscriptView
                   transcripts={transcripts}
                   isRecording={isRecording}
-                  isPaused={false}
+                  isPaused={isPaused}
                   isProcessing={isProcessingStop}
                   isStopping={isStopping}
                   enableStreaming={isRecording}
@@ -1537,6 +1558,8 @@ export default function Home() {
                       selectedDevices={selectedDevices}
                       meetingName={meetingTitle}
                       onSessionIdReceived={setCurrentSessionId}
+                      initialSessionId={currentSessionId}
+                      onPauseChange={setIsPaused}
                     />
                   </div>
                 </div>
@@ -1562,10 +1585,16 @@ export default function Home() {
                   </div>
                   <div className="h-8 w-px bg-amber-200 mx-2"></div>
                   <Button
+                    onClick={() => handleRecordingStart()}
+                    className="bg-blue-600 hover:bg-blue-700 text-white rounded-full px-6"
+                  >
+                    Resume Meeting
+                  </Button>
+                  <Button
                     onClick={() => handleWebAudioRecordingStop()}
                     className="bg-green-600 hover:bg-green-700 text-white rounded-full px-6"
                   >
-                    Save Meeting
+                    Save & Finish
                   </Button>
                   <Button
                     variant="outline"

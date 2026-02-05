@@ -51,7 +51,7 @@ export default function PageContent({
   // Sidebar context
   const { serverAddress } = useSidebar();
 
-// Custom hooks
+  // Custom hooks
   const meetingData = useMeetingData({ meeting, summaryData, onMeetingUpdated });
   const modelConfig = useModelConfiguration({ serverAddress });
   const templates = useTemplates();
@@ -86,7 +86,7 @@ export default function PageContent({
   useEffect(() => {
     if (diarization.error) {
       console.error('Diarization error:', diarization.error);
-      
+
       // Check for specific "No audio" error
       if (diarization.error.includes('No audio recording directory found') || diarization.error.includes('No audio recording found')) {
         toast.error('Diarization Failed', {
@@ -223,7 +223,6 @@ export default function PageContent({
           isSaving={meetingData.isSaving}
           onSaveAll={meetingData.saveAllChanges}
           onCopySummary={copyOperations.handleCopySummary}
-          onOpenFolder={meetingOperations.handleOpenMeetingFolder}
           aiSummary={meetingData.aiSummary}
           summaryStatus={summaryGeneration.summaryStatus}
           transcripts={meetingData.transcripts}

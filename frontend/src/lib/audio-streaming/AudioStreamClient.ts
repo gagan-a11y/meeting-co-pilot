@@ -44,13 +44,13 @@ export class AudioStreamClient {
   /**
    * Start streaming audio to backend
    */
-  async start(callbacks: StreamingCallbacks, userEmail?: string): Promise<void> {
+  async start(callbacks: StreamingCallbacks, userEmail?: string, sessionId?: string): Promise<void> {
     if (this.isStreaming) return;
 
     this.callbacks = callbacks;
     this.reconnectAttempts = 0;
     this.audioQueue = []; // Clear queue on fresh start
-    this.sessionId = null; // Clear session on fresh start
+    this.sessionId = sessionId || null; // Use provided sessionId if available
     this.userEmail = userEmail || null;
     this.recordingStartTime = 0; // Will be set after AudioContext creation
 
@@ -296,6 +296,35 @@ export class AudioStreamClient {
       this.websocket.close();
       this.websocket = null;
     }
+  }
+
+  /**
+   * Pause the audio stream by suspending the audio context
+   */
+  async pause(): Promise<void> {
+    if (this.audioContext && this.audioContext.state === 'running') {
+      console.log('[AudioStream] Pausing...');
+      await this.audioContext.suspend();
+      console.log('[AudioStream] Paused');
+    }
+  }
+
+  /**
+   * Resume the audio stream
+   */
+  async resume(): Promise<void> {
+    if (this.audioContext && this.audioContext.state === 'suspended') {
+      console.log('[AudioStream] Resuming...');
+      await this.audioContext.resume();
+      console.log('[AudioStream] Resumed');
+    }
+  }
+
+  /**
+   * Check if stream is paused
+   */
+  isPaused(): boolean {
+    return this.audioContext?.state === 'suspended';
   }
 
   /**

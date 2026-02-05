@@ -186,9 +186,9 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
             # Step D: Save to DB
             async with db._get_connection() as conn:
                 async with conn.transaction():
-                    # 1. Clear old transcripts
+                    # 1. Clear old diarized transcripts only (Preserve live)
                     await conn.execute(
-                        "DELETE FROM transcript_segments WHERE meeting_id = $1",
+                        "DELETE FROM transcript_segments WHERE meeting_id = $1 AND source = 'diarized'",
                         meeting_id,
                     )
 

@@ -12,8 +12,8 @@ interface SummaryModelSettingsProps {
 
 export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsProps) {
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
-    provider: 'ollama',
-    model: 'llama3.2:latest',
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
     whisperModel: 'large-v3',
     apiKey: null,
     ollamaEndpoint: null

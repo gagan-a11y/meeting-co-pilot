@@ -188,9 +188,9 @@ export function ChatInterface({ meetingId, onClose, currentTranscripts }: ChatIn
             // Create a placeholder for the AI response
             setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
 
-            // Use configured model or default to Gemini Flash
-            const provider = 'gemini';
-            const modelName = 'gemini-2.5-flash';
+            // Use configured model or factory default
+            const provider = modelConfig?.provider || 'gemini';
+            const modelName = modelConfig?.model || 'gemini-2.5-flash';
 
             const contextText = getContextFromTranscripts();
 

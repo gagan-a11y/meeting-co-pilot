@@ -2,7 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
-import { Square, Mic, AlertCircle, X } from 'lucide-react';
+import { Square, Mic, AlertCircle, X, Pause, Play } from 'lucide-react';
 import { SummaryResponse } from '@/types/summary';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -26,6 +26,8 @@ interface RecordingControlsProps {
   };
   meetingName?: string;
   onSessionIdReceived?: (sessionId: string) => void;
+  initialSessionId?: string | null;
+  onPauseChange?: (paused: boolean) => void;
 }
 
 export const RecordingControls: React.FC<RecordingControlsProps> = ({
@@ -38,9 +40,12 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   onStopInitiated,
   isRecordingDisabled,
   isParentProcessing,
-  onSessionIdReceived
+  onSessionIdReceived,
+  initialSessionId,
+  onPauseChange
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [deviceError, setDeviceError] = useState<{ title: string, message: string } | null>(null);
@@ -58,6 +63,14 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       isRecordingDisabled,
       isParentProcessing
     });
+
+    return () => {
+      if (audioClientRef.current) {
+        console.log('🧹 [RecordingControls] Unmounting - cleaning up audio client');
+        audioClientRef.current.stop();
+        audioClientRef.current = null;
+      }
+    };
   }, []);
 
   // Listen for session expiry events from api.ts
@@ -79,6 +92,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
     console.log('🎙️ [RecordingControls] Starting real-time streaming transcription...');
     setIsStarting(true);
+    setIsPaused(false);
     setDeviceError(null);
 
     try {
@@ -133,7 +147,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
         onDisconnected: () => {
           console.log('🔌 Streaming disconnected');
         }
-      }, session?.user?.email || undefined);
+      }, session?.user?.email || undefined, initialSessionId || undefined);
 
       console.log('✅ Real-time streaming started');
 
@@ -201,7 +215,28 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     } finally {
       setIsStopping(false);
     }
+
   }, [isRecording, isStarting, isStopping, onStopInitiated, onRecordingStop]);
+
+  const handlePauseResume = useCallback(async () => {
+    if (!audioClientRef.current) return;
+
+    try {
+      if (isPaused) {
+        await audioClientRef.current.resume();
+        setIsPaused(false);
+        onPauseChange?.(false);
+        console.log('▶️ Resumed recording');
+      } else {
+        await audioClientRef.current.pause();
+        setIsPaused(true);
+        onPauseChange?.(true);
+        console.log('⏸️ Paused recording');
+      }
+    } catch (error) {
+      console.error('Failed to toggle pause/resume:', error);
+    }
+  }, [isPaused, onPauseChange]);
 
   return (
     <TooltipProvider>
@@ -238,29 +273,49 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                   </TooltipContent>
                 </Tooltip>
               ) : (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => {
-                        Analytics.trackButtonClick('stop_recording', 'recording_controls');
-                        handleStopRecording();
-                      }}
-                      disabled={isStopping}
-                      className={`w-10 h-10 flex items-center justify-center ${isStopping ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
-                        } rounded-full text-white transition-colors relative`}
-                    >
-                      <Square size={16} />
-                      {isStopping && (
-                        <div className="absolute -top-8 text-gray-600 font-medium text-xs">
-                          Stopping...
-                        </div>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Stop recording</p>
-                  </TooltipContent>
-                </Tooltip>
+                <div className="flex items-center space-x-2">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePauseResume();
+                        }}
+                        className={`w-10 h-10 flex items-center justify-center ${isPaused ? 'bg-amber-500 hover:bg-amber-600' : 'bg-blue-500 hover:bg-blue-600'
+                          } rounded-full text-white transition-colors`}
+                      >
+                        {isPaused ? <Play size={16} /> : <Pause size={16} />}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{isPaused ? 'Resume recording' : 'Pause recording'}</p>
+                    </TooltipContent>
+                  </Tooltip>
+
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => {
+                          Analytics.trackButtonClick('stop_recording', 'recording_controls');
+                          handleStopRecording();
+                        }}
+                        disabled={isStopping}
+                        className={`w-10 h-10 flex items-center justify-center ${isStopping ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
+                          } rounded-full text-white transition-colors relative`}
+                      >
+                        <Square size={16} />
+                        {isStopping && (
+                          <div className="absolute -top-8 text-gray-600 font-medium text-xs">
+                            Stopping...
+                          </div>
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Stop recording</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               )}
 
               <div className="flex items-center space-x-1 mx-4">
@@ -276,7 +331,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
               </div>
             </>
           )}
-        </div>
+        </div >
 
         {sessionError && (
           <Alert className="mt-4 border-yellow-300 bg-yellow-50">
@@ -297,29 +352,31 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           </Alert>
         )}
 
-        {deviceError && (
-          <Alert variant="destructive" className="mt-4 border-red-300 bg-red-50">
-            <AlertCircle className="h-5 w-5 text-red-600" />
-            <button
-              onClick={() => setDeviceError(null)}
-              className="absolute right-3 top-3 text-red-600 hover:text-red-800 transition-colors"
-              aria-label="Close alert"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <AlertTitle className="text-red-800 font-semibold mb-2">
-              {deviceError.title}
-            </AlertTitle>
-            <AlertDescription className="text-red-700">
-              {deviceError.message.split('\n').map((line, i) => (
-                <div key={i} className={i > 0 ? 'ml-2' : ''}>
-                  {line}
-                </div>
-              ))}
-            </AlertDescription>
-          </Alert>
-        )}
-      </div>
-    </TooltipProvider>
+        {
+          deviceError && (
+            <Alert variant="destructive" className="mt-4 border-red-300 bg-red-50">
+              <AlertCircle className="h-5 w-5 text-red-600" />
+              <button
+                onClick={() => setDeviceError(null)}
+                className="absolute right-3 top-3 text-red-600 hover:text-red-800 transition-colors"
+                aria-label="Close alert"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <AlertTitle className="text-red-800 font-semibold mb-2">
+                {deviceError.title}
+              </AlertTitle>
+              <AlertDescription className="text-red-700">
+                {deviceError.message.split('\n').map((line, i) => (
+                  <div key={i} className={i > 0 ? 'ml-2' : ''}>
+                    {line}
+                  </div>
+                ))}
+              </AlertDescription>
+            </Alert>
+          )
+        }
+      </div >
+    </TooltipProvider >
   );
 };

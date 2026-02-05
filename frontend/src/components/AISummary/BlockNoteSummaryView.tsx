@@ -92,17 +92,21 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
     if (format === 'markdown' && data?.markdown && editor) {
       const loadMarkdown = async () => {
         try {
-          console.log('📝 Parsing markdown to BlockNote blocks...');
+          console.log('📝 BLOCKNOTE VIEW: Parsing markdown to BlockNote blocks...', {
+            length: data.markdown.length,
+            preview: data.markdown.substring(0, 100) + '...'
+          });
           const blocks = await editor.tryParseMarkdownToBlocks(data.markdown);
+          console.log('📝 BLOCKNOTE VIEW: Generated blocks count:', blocks.length);
           editor.replaceBlocks(editor.document, blocks);
-          console.log('✅ Markdown parsed successfully');
+          console.log('✅ BLOCKNOTE VIEW: Markdown parsed and applied successfully');
 
           // Delay to ensure editor has finished rendering before allowing onChange
           setTimeout(() => {
             isContentLoaded.current = true;
           }, 100);
         } catch (err) {
-          console.error('❌ Failed to parse markdown:', err);
+          console.error('❌ BLOCKNOTE VIEW: Failed to parse markdown:', err);
         }
       };
       loadMarkdown();

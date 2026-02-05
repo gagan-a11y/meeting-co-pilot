@@ -112,9 +112,10 @@ function MeetingDetailsContent() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       const summary = await response.json();
-      console.log('🔍 FETCH SUMMARY: Raw response:', summary);
+      console.log('🔍 FETCH SUMMARY: Received data:', summary);
 
       if (summary.status === 'error' || summary.error || summary.status === 'idle') {
+        console.warn('⚠️ FETCH SUMMARY: Summary state is incomplete:', summary.status);
         setMeetingSummary(null);
         return;
       }
@@ -125,16 +126,20 @@ function MeetingDetailsContent() {
         try {
           parsedData = JSON.parse(summaryData);
         } catch (e) {
+          console.warn('⚠️ FETCH SUMMARY: Failed to parse string data:', e);
           parsedData = {};
         }
       }
 
+      // Check for modern formats first and preserve them
       if (parsedData.summary_json || parsedData.markdown) {
+        console.log('✅ FETCH SUMMARY: Detected modern format (markdown/json)');
         setMeetingSummary(parsedData as any);
         return;
       }
 
       // Legacy format handling
+      console.log('📝 FETCH SUMMARY: Falling back to legacy format processing');
       const { MeetingName, _section_order, ...restSummaryData } = parsedData;
       const formattedSummary: Summary = {};
       const sectionKeys = _section_order || Object.keys(restSummaryData);

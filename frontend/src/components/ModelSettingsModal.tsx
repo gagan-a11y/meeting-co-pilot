@@ -3,7 +3,7 @@ import { useSidebar } from './Sidebar/SidebarProvider';
 import { authFetch } from '@/lib/api';
 
 import { Button } from '@/components/ui/button';
-import { useOllamaDownload } from '@/contexts/OllamaDownloadContext';
+// import { useOllamaDownload } from '@/contexts/OllamaDownloadContext';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -80,11 +80,12 @@ export function ModelSettingsModal({
   const [isEndpointSectionCollapsed, setIsEndpointSectionCollapsed] = useState<boolean>(true); // Collapsed by default
 
   // Use global download context instead of local state
-  const { isDownloading, getProgress, downloadingModels, downloadModel } = useOllamaDownload();
+  // const { isDownloading, getProgress, downloadingModels, downloadModel } = useOllamaDownload();
 
   // Cache models by endpoint to avoid refetching when reverting endpoint changes
   const modelsCache = useRef<Map<string, OllamaModel[]>>(new Map());
 
+  /*
   // URL validation helper
   const validateOllamaEndpoint = (url: string): boolean => {
     if (!url.trim()) return true; // Empty is valid (uses default)
@@ -112,6 +113,7 @@ export function ModelSettingsModal({
 
     return () => clearTimeout(timer);
   }, [ollamaEndpoint]);
+  */
 
   const fetchApiKey = async (provider: string) => {
     try {
@@ -136,7 +138,7 @@ export function ModelSettingsModal({
     ollama: models.map((model) => model.name),
     claude: ['claude-3-5-sonnet-latest', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620'],
     groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-    gemini: ['gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-1.5-pro'],
+    gemini: ['gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
     openai: [
       'gpt-5',
       'gpt-5-mini',
@@ -271,6 +273,7 @@ export function ModelSettingsModal({
     }
   }, [ollamaEndpoint, lastFetchedEndpoint, modelConfig.provider]);
 
+  /*
   // Manual fetch function for Ollama models
   const fetchOllamaModels = async (silent = false) => {
     const trimmedEndpoint = ollamaEndpoint.trim();
@@ -319,7 +322,9 @@ export function ModelSettingsModal({
       setIsLoadingOllama(false);
     }
   };
+  */
 
+  /*
   // Auto-fetch models on initial load only (not on endpoint changes)
   useEffect(() => {
     let mounted = true;
@@ -344,6 +349,7 @@ export function ModelSettingsModal({
       mounted = false;
     };
   }, [modelConfig.provider]); // Only depend on provider, NOT endpoint
+  */
 
   const loadOpenRouterModels = async () => {
     if (openRouterModels.length > 0) return; // Already loaded
@@ -397,6 +403,7 @@ export function ModelSettingsModal({
     }
   };
 
+  /*
   // Function to download recommended model
   const downloadRecommendedModel = async () => {
     const recommendedModel = 'gemma3:1b';
@@ -470,6 +477,7 @@ export function ModelSettingsModal({
     // Update ref for next comparison
     previousDownloadingRef.current = new Set(current);
   }, [downloadingModels]);
+  */
 
   // Filter Ollama models based on search query
   const filteredModels = models.filter((model) => {
@@ -530,7 +538,7 @@ export function ModelSettingsModal({
                 <SelectItem value="gemini">Gemini</SelectItem>
                 <SelectItem value="claude">Claude</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
-                <SelectItem value="ollama">Ollama</SelectItem>
+                {/* <SelectItem value="ollama">Ollama (Local)</SelectItem> */}
                 <SelectItem value="openai">OpenAI</SelectItem>
                 <SelectItem value="openrouter">OpenRouter</SelectItem>
               </SelectContent>
@@ -604,7 +612,7 @@ export function ModelSettingsModal({
           </div>
         )}
 
-        {modelConfig.provider === 'ollama' && (
+        {/* {modelConfig.provider === 'ollama' && (
           <div>
             <div
               className="flex items-center justify-between cursor-pointer py-2"
@@ -680,9 +688,9 @@ export function ModelSettingsModal({
               </>
             )}
           </div>
-        )}
+        )} */}
 
-        {modelConfig.provider === 'ollama' && (
+        {/* {modelConfig.provider === 'ollama' && (
           <div>
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-sm font-bold">Available Ollama Models</h4>
@@ -741,7 +749,7 @@ export function ModelSettingsModal({
                       )}
                     </Button>
 
-                    {/* Show progress for gemma3:1b download */}
+                    {/* Show progress for gemma3:1b download 
                     {isDownloading('gemma3:1b') && getProgress('gemma3:1b') !== undefined && (
                       <div className="bg-white rounded-md border p-3">
                         <div className="flex items-center justify-between mb-2">
@@ -797,7 +805,7 @@ export function ModelSettingsModal({
                             <span className="font-mono font-bold text-sm">{model.size}</span>
                           </div>
 
-                          {/* Progress bar for downloading models */}
+                          {/* Progress bar for downloading models 
                           {modelIsDownloading && progress !== undefined && (
                             <div className="mt-3 pt-3 border-t border-gray-200">
                               <div className="flex items-center justify-between mb-2">
@@ -820,7 +828,7 @@ export function ModelSettingsModal({
               </ScrollArea>
             )}
           </div>
-        )}
+        )} */}
       </div>
 
       {/* Auto-generate summaries toggle */}

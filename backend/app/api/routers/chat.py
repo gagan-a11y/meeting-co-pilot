@@ -190,8 +190,9 @@ Quick Catch-Up Summary:"""
                         )
 
                     model = genai.GenerativeModel(model_name)
-                    response = model.generate_content(catch_up_prompt, stream=True)
-                    for chunk in response:
+                    # Use async generation for non-blocking streaming
+                    response = await model.generate_content_async(catch_up_prompt, stream=True)
+                    async for chunk in response:
                         if chunk.text:
                             yield chunk.text
             except Exception as e:

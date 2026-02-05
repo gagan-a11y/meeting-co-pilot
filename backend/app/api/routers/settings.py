@@ -45,13 +45,12 @@ async def get_model_config(current_user: User = Depends(get_current_user)):
     """Get the model configuration"""
     config = await db.get_model_config()
     if config:
-        # HOTFIX: Migrate users away from non-existent gemini-2.5/2.0 models
-        if config.get("model", "").startswith("gemini-2."):
+        # HOTFIX: Migrate users away from retired gemini-1.5 models
+        if config.get("model", "") == "gemini-1.5-flash" or config.get("model", "") == "gemini-1.5-pro":
             logger.info(
-                f"Migrating deprecated model {config['model']} to gemini-2.5-flash"
+                f"Migrating retired model {config['model']} to gemini-2.5-flash"
             )
             config["model"] = "gemini-2.5-flash"
-            # Optionally update DB to persist this fix
             await db.save_model_config(
                 config["provider"],
                 "gemini-2.5-flash",

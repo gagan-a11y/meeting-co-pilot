@@ -90,6 +90,7 @@ export function useSummaryGeneration({
             model: 'gemini',
             model_name: 'gemini-2.5-flash',
             custom_context: customPrompt || '',  // Add context from user input
+            transcript: transcriptText, // Pass the explicit transcript text (with speakers)
           })
         });
 
@@ -142,7 +143,7 @@ export function useSummaryGeneration({
 
           // Check if backend returned markdown format (new flow)
           if (pollingResult.data.markdown) {
-            console.log('📝 Received markdown format from backend');
+            console.log('✅ GENERATE SUMMARY: Received markdown format from backend');
             setAiSummary({ markdown: pollingResult.data.markdown } as any);
             setSummaryStatus('completed');
 
@@ -313,7 +314,10 @@ export function useSummaryGeneration({
       template: selectedTemplate
     });
 
-    const fullTranscript = transcripts.map(t => t.text).join('\n');
+    const fullTranscript = transcripts.map(t => {
+      const speakerPrefix = t.speaker ? `[${t.speaker}]: ` : '';
+      return `${speakerPrefix}${t.text}`;
+    }).join('\n');
     await processSummary({ transcriptText: fullTranscript, customPrompt });
   }, [transcripts, processSummary, isModelConfigLoading, selectedTemplate]);
 

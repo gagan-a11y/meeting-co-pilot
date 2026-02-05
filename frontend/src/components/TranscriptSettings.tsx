@@ -3,7 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
-import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
+import { Eye, EyeOff, Lock, Unlock, Loader2 } from 'lucide-react';
 import { ModelManager } from './WhisperModelManager';
 import { ParakeetModelManager } from './ParakeetModelManager';
 import { apiUrl } from '@/lib/config';
@@ -24,6 +24,7 @@ export interface TranscriptSettingsProps {
 
 export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelConfig, onModelSelect }: TranscriptSettingsProps) {
     const [apiKey, setApiKey] = useState<string | null>(transcriptModelConfig.apiKey || null);
+    const [isLoadingKey, setIsLoadingKey] = useState(false);
     const [showApiKey, setShowApiKey] = useState<boolean>(false);
     const [isApiKeyLocked, setIsApiKeyLocked] = useState<boolean>(true);
     const [isLockButtonVibrating, setIsLockButtonVibrating] = useState<boolean>(false);
@@ -37,6 +38,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     }, [transcriptModelConfig.provider]);
 
     const fetchApiKey = async (provider: string) => {
+        setIsLoadingKey(true);
         try {
             const response = await authFetch('/get-transcript-config');
             if (response.ok) {
@@ -52,6 +54,8 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         } catch (err) {
             console.error('Error fetching API key:', err);
             setApiKey(null);
+        } finally {
+            setIsLoadingKey(false);
         }
     };
     const modelOptions = {
@@ -118,12 +122,14 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     const newModel = provider === 'localWhisper' ? selectedWhisperModel : modelOptions[provider][0];
                                     setTranscriptModelConfig({ ...transcriptModelConfig, provider, model: newModel });
                                     if (provider !== 'localWhisper') {
+                                        // fetchApiKey handles the loading state internally if we pass it, 
+                                        // otherwise we can just call it.
                                         fetchApiKey(provider);
                                     }
                                 }}
                             >
                                 <SelectTrigger className='focus:ring-1 focus:ring-blue-500 focus:border-blue-500'>
-                                    <SelectValue placeholder="Select provider" />
+                                    <SelectValue placeholder={transcriptModelConfig.provider ? "Select provider" : "Loading..."} />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="parakeet">⚡ Parakeet (Recommended - Real-time / Accurate)</SelectItem>
@@ -199,6 +205,11 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                         onClick={handleInputClick}
                                         className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-50 rounded-md cursor-not-allowed"
                                     />
+                                )}
+                                {isLoadingKey && (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-75 rounded-md">
+                                        <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+                                    </div>
                                 )}
                                 <div className="absolute inset-y-0 right-0 pr-1 flex items-center">
                                     <Button

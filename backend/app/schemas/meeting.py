@@ -47,6 +47,7 @@ class GenerateNotesRequest(BaseModel):
     model: str = "gemini"
     model_name: str = "gemini-2.5-flash"
     custom_context: str = ""  # User-provided context for better note generation
+    transcript: str = ""  # Optional explicit transcript text (to override DB)
 
 
 class RefineNotesRequest(BaseModel):

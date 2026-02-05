@@ -63,11 +63,11 @@ function formatISTTime(timestamp: string | undefined): string {
     // But typically transcript.timestamp is an ISO string or similar.
     // If it is just a time string, we might need to be careful.
     // Assuming ISO string or Date string.
-    
+
     // Create date object (handling UTC input)
     // If it's a simple time string like "14:30:00", we might need to prepend a date.
     // But usually from DB/WebSocket it is full ISO.
-    
+
     // Check if it looks like a time string (HH:MM:SS)
     if (/^\d{2}:\d{2}:\d{2}$/.test(timestamp)) {
       // It's already time, just return HH:MM
@@ -77,11 +77,11 @@ function formatISTTime(timestamp: string | undefined): string {
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) return '[--:--]';
 
-    return `[${date.toLocaleTimeString('en-IN', { 
-      timeZone: 'Asia/Kolkata', 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      hour12: false 
+    return `[${date.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
     })}]`;
   } catch (e) {
     return '[--:--]';
@@ -143,7 +143,7 @@ function cleanStopWords(text: string): string {
 
     // FIRST: Clean repetitions (especially short words)
     let cleanedText = cleanRepetitions(text);
-    
+
     // Safety check: ensure result is string
     if (typeof cleanedText !== 'string') cleanedText = '';
 
@@ -159,7 +159,7 @@ function cleanStopWords(text: string): string {
     stopWords.forEach(word => {
       // Extra safety check before replace
       if (typeof cleanedText !== 'string') return;
-      
+
       // Match the stop word at word boundaries, with optional punctuation
       const pattern = new RegExp(`\\b${word}\\b[,\\s]*`, 'gi');
       cleanedText = cleanedText.replace(pattern, ' ');
@@ -167,7 +167,7 @@ function cleanStopWords(text: string): string {
 
     // Clean up extra whitespace and trim
     if (typeof cleanedText === 'string') {
-       return cleanedText.replace(/\s+/g, ' ').trim();
+      return cleanedText.replace(/\s+/g, ' ').trim();
     }
     return '';
   } catch (e) {
@@ -179,7 +179,7 @@ function cleanStopWords(text: string): string {
 function getSegmentStyle(state?: string, source?: string): string {
   // If no state provided but it's diarized, assume confident (legacy support)
   if (!state && source === 'diarized') return 'border-l-4 border-green-500 pl-3';
-  
+
   switch (state) {
     case 'CONFIDENT':
       return 'border-l-4 border-green-500 pl-3';
@@ -339,15 +339,14 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
         // RESOLVE SOURCE: Default to 'live' if missing (safe fallback)
         const source = transcript.source || 'live';
         const isLive = source === 'live';
-        
+
         let showSpeaker = false;
         if (isLive && !forceShowSpeakers) {
-             // LIVE: Only show if it's NOT Speaker 0
-             // (User wants to hide Speaker 0 during live view)
-             showSpeaker = resolvedSpeaker !== 'Speaker 0';
+          // LIVE: Always hide speaker labels as per user request
+          showSpeaker = false;
         } else {
-             // DIARIZED (or Forced): Always show the label
-             showSpeaker = true;
+          // DIARIZED (or Forced): Always show the label
+          showSpeaker = true;
         }
 
         // DEDUPLICATION: Only show if it changed from the previous segment
@@ -357,16 +356,16 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
         const shouldDeduplicate = !forceShowSpeakers && isLive;
 
         if (index > 0 && prevResolvedSpeaker === resolvedSpeaker && shouldDeduplicate) {
-             showSpeaker = false;
+          showSpeaker = false;
         }
 
         const speakerName = speakerMap[resolvedSpeaker] || resolvedSpeaker;
 
         // SAFE GUARD: Ensure both sides are defined and valid strings before comparing
-        const isStreaming = !!streamingTranscript && 
-                           !!transcript.id && 
-                           streamingTranscript.id === transcript.id;
-        
+        const isStreaming = !!streamingTranscript &&
+          !!transcript.id &&
+          streamingTranscript.id === transcript.id;
+
         const textToShow = isStreaming ? streamingTranscript.visibleText : transcript.text;
         const filteredText = cleanStopWords(textToShow);
         const originalText = transcript.text || ''; // Default to empty string if undefined
@@ -390,10 +389,10 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({
               <Tooltip>
                 <TooltipTrigger>
                   <span className="text-xs text-gray-400 mt-1 flex-shrink-0 min-w-[50px]">
-                    {isRecording 
+                    {isRecording
                       ? formatISTTime(transcript.timestamp)
-                      : (transcript.audio_start_time != null 
-                        ? formatRecordingTime(transcript.audio_start_time) 
+                      : (transcript.audio_start_time != null
+                        ? formatRecordingTime(transcript.audio_start_time)
                         : formatISTTime(transcript.timestamp))}
                   </span>
                 </TooltipTrigger>

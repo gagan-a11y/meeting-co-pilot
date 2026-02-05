@@ -12,7 +12,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.groq import GroqProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from ollama import AsyncClient
+# from ollama import AsyncClient
 
 try:
     from ..db import DatabaseManager
@@ -106,24 +106,24 @@ class TranscriptService:
                     model_name, provider=AnthropicProvider(api_key=api_key)
                 )
                 logger.info(f"Using Claude model: {model_name}")
-            elif model == "ollama":
-                # Use environment variable for Ollama host configuration
-                ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-                ollama_base_url = f"{ollama_host}/v1"
-                ollama_model = OpenAIModel(
-                    model_name=model_name,
-                    provider=OpenAIProvider(base_url=ollama_base_url),
-                )
-                llm = ollama_model
-                if model_name.lower().startswith(
-                    "phi4"
-                ) or model_name.lower().startswith("llama"):
-                    chunk_size = 10000
-                    overlap = 1000
-                else:
-                    chunk_size = 30000
-                    overlap = 1000
-                logger.info(f"Using Ollama model: {model_name}")
+            # elif model == "ollama":
+            #     # Use environment variable for Ollama host configuration
+            #     ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+            #     ollama_base_url = f"{ollama_host}/v1"
+            #     ollama_model = OpenAIModel(
+            #         model_name=model_name,
+            #         provider=OpenAIProvider(base_url=ollama_base_url),
+            #     )
+            #     llm = ollama_model
+            #     if model_name.lower().startswith(
+            #         "phi4"
+            #     ) or model_name.lower().startswith("llama"):
+            #         chunk_size = 10000
+            #         overlap = 1000
+            #     else:
+            #         chunk_size = 30000
+            #         overlap = 1000
+            #     logger.info(f"Using Ollama model: {model_name}")
             elif model == "groq":
                 api_key = await self.db.get_api_key("groq", user_email=user_email)
                 if not api_key:
@@ -271,7 +271,7 @@ class TranscriptService:
                             success = True
                             break
 
-                        elif model != "ollama":
+                        else: # Changed from elif model != "ollama": because Ollama support is removed
                             summary_result = await agent.run(
                                 f"""Given the following meeting transcript chunk, extract the relevant information according to the required JSON structure. If a specific section (like Critical Deadlines) has no relevant information in this chunk, return an empty list for its 'blocks'. Ensure the output is only the JSON data.
 
@@ -297,27 +297,27 @@ class TranscriptService:
                             Make sure the output is only the JSON data.
                             """,
                             )
-                        else:
-                            logger.info(
-                                f"Using Ollama model: {model_name} and chunk size: {chunk_size} with overlap: {overlap}"
-                            )
-                            # Helper method included in this class
-                            response = await self._chat_ollama_model(
-                                model_name, chunk, custom_prompt
-                            )
+                        # else:
+                        #     logger.info(
+                        #         f"Using Ollama model: {model_name} and chunk size: {chunk_size} with overlap: {overlap}"
+                        #     )
+                        #     # Helper method included in this class
+                        #     response = await self._chat_ollama_model(
+                        #         model_name, chunk, custom_prompt
+                        #     )
 
-                            # Check if response is already a SummaryResponse object or a string that needs validation
-                            if isinstance(response, SummaryResponse):
-                                summary_result = response
-                            else:
-                                # If it's a string (JSON), validate it
-                                summary_result = SummaryResponse.model_validate_json(
-                                    response
-                                )
+                        #     # Check if response is already a SummaryResponse object or a string that needs validation
+                        #     if isinstance(response, SummaryResponse):
+                        #         summary_result = response
+                        #     else:
+                        #         # If it's a string (JSON), validate it
+                        #         summary_result = SummaryResponse.model_validate_json(
+                        #             response
+                        #         )
 
-                            logger.info(
-                                f"Summary result for chunk {i + 1}: {summary_result}"
-                            )
+                        #     logger.info(
+                        #         f"Summary result for chunk {i + 1}: {summary_result}"
+                        #     )
 
                         if hasattr(summary_result, "data") and isinstance(
                             summary_result.data, SummaryResponse
@@ -379,92 +379,92 @@ class TranscriptService:
             logger.error(f"Error during transcript processing: {str(e)}", exc_info=True)
             raise
 
-    async def _chat_ollama_model(
-        self, model_name: str, transcript: str, custom_prompt: str
-    ):
-        """Internal helper for Ollama summarization"""
-        message = {
-            "role": "system",
-            "content": f"""
-        Given the following meeting transcript chunk, extract the relevant information according to the required JSON structure. If a specific section (like Critical Deadlines) has no relevant information in this chunk, return an empty list for its 'blocks'. Ensure the output is only the JSON data.
+    # async def _chat_ollama_model(
+    #     self, model_name: str, transcript: str, custom_prompt: str
+    # ):
+    #     """Internal helper for Ollama summarization"""
+    #     message = {
+    #         "role": "system",
+    #         "content": f"""
+    #     Given the following meeting transcript chunk, extract the relevant information according to the required JSON structure. If a specific section (like Critical Deadlines) has no relevant information in this chunk, return an empty list for its 'blocks'. Ensure the output is only the JSON data.
 
-        Transcript Chunk:
-            ---
-            {transcript}
-            ---
-        Please capture all relevant action items. Transcription can have spelling mistakes. correct it if required. context is important.
-        
-        While generating the summary, please add the following context:
-        ---
-        {custom_prompt}
-        ---
+    #     Transcript Chunk:
+    #         ---
+    #         {{transcript}}
+    #         ---
+    #     Please capture all relevant action items. Transcription can have spelling mistakes. correct it if required. context is important.
+    #     
+    #     While generating the summary, please add the following context:
+    #     ---
+    #     {{custom_prompt}}
+    #     ---
 
-        Make sure the output is only the JSON data.
-    
-        """,
-        }
+    #     Make sure the output is only the JSON data.
+    # 
+    #     """,
+    #     }
 
-        # Create a client and track it for cleanup
-        ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    #     # Create a client and track it for cleanup
+    #     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
-        # Use async context manager to ensure client is closed
-        async with AsyncClient(host=ollama_host) as client:
-            self.active_clients.append(client)
-            try:
-                # Increase timeout for long context processing
-                response = await client.chat(
-                    model=model_name,
-                    messages=[message],
-                    stream=True,
-                    format=SummaryResponse.model_json_schema(),
-                )
+    #     # Use async context manager to ensure client is closed
+    #     async with AsyncClient(host=ollama_host) as client:
+    #         self.active_clients.append(client)
+    #         try:
+    #             # Increase timeout for long context processing
+    #             response = await client.chat(
+    #                 model=model_name,
+    #                 messages=[message],
+    #                 stream=True,
+    #                 format=SummaryResponse.model_json_schema(),
+    #             )
 
-                full_response = ""
-                async for part in response:
-                    content = part["message"]["content"]
-                    full_response += content
+    #             full_response = ""
+    #             async for part in response:
+    #                 content = part["message"]["content"]
+    #                 full_response += content
 
-                try:
-                    summary = SummaryResponse.model_validate_json(full_response)
-                    return summary
-                except Exception as e:
-                    logger.error(
-                        f"Error parsing Ollama response: {e}. Raw response: {full_response[:200]}..."
-                    )
-                    return full_response
+    #             try:
+    #                 summary = SummaryResponse.model_validate_json(full_response)
+    #                 return summary
+    #             except Exception as e:
+    #                 logger.error(
+    #                     f"Error parsing Ollama response: {{e}}. Raw response: {{full_response[:200]}}..."
+    #                 )
+    #                 return full_response
 
-            except asyncio.CancelledError:
-                logger.info("Ollama request was cancelled during shutdown")
-                raise
-            except Exception as e:
-                logger.error(f"Error in Ollama chat: {e}")
-                raise
-            finally:
-                if client in self.active_clients:
-                    self.active_clients.remove(client)
+    #         except asyncio.CancelledError:
+    #             logger.info("Ollama request was cancelled during shutdown")
+    #             raise
+    #         except Exception as e:
+    #             logger.error(f"Error in Ollama chat: {{e}}")
+    #             raise
+    #         finally:
+    #             if client in self.active_clients:
+    #                 self.active_clients.remove(client)
 
     def cleanup(self):
         """Clean up resources used by the TranscriptProcessor."""
         logger.info("Cleaning up TranscriptService resources")
-        try:
-            # Cancel any active Ollama client sessions
-            if hasattr(self, "active_clients") and self.active_clients:
-                logger.info(
-                    f"Terminating {len(self.active_clients)} active Ollama client sessions"
-                )
-                for client in self.active_clients:
-                    try:
-                        if hasattr(client, "_client") and hasattr(
-                            client._client, "close"
-                        ):
-                            asyncio.create_task(client._client.aclose())
-                    except Exception as client_error:
-                        logger.error(
-                            f"Error closing Ollama client: {client_error}",
-                            exc_info=True,
-                        )
-                self.active_clients.clear()
-        except Exception as e:
-            logger.error(
-                f"Error during TranscriptService cleanup: {str(e)}", exc_info=True
-            )
+        # try:
+        #     # Cancel any active Ollama client sessions
+        #     if hasattr(self, "active_clients") and self.active_clients:
+        #         logger.info(
+        #             f"Terminating {len(self.active_clients)} active Ollama client sessions"
+        #         )
+        #         for client in self.active_clients:
+        #             try:
+        #                 if hasattr(client, "_client") and hasattr(
+        #                     client._client, "close"
+        #                 ):
+        #                     asyncio.create_task(client._client.aclose())
+        #             except Exception as client_error:
+        #                 logger.error(
+        #                     f"Error closing Ollama client: {client_error}",
+        #                     exc_info=True,
+        #                 )
+        #         self.active_clients.clear()
+        # except Exception as e:
+        #     logger.error(
+        #         f"Error during TranscriptService cleanup: {str(e)}", exc_info=True
+        #     )

@@ -1405,15 +1405,25 @@ async def generate_notes_for_meeting(
             f"Generating notes for meeting {actual_meeting_id} using template {template_id}"
         )
 
-        # 1. Fetch meeting transcripts from the database
-        meeting_data = await db.get_meeting(actual_meeting_id)
-        if not meeting_data or not meeting_data.get("transcripts"):
-            raise HTTPException(
-                status_code=404, detail="Meeting or transcripts not found."
-            )
+        # 1. Fetch meeting transcripts
+        # Check if transcript is provided in request (e.g. from frontend with specific version/edits)
+        if request and request.transcript and request.transcript.strip():
+            logger.info(f"Using provided transcript text for meeting {actual_meeting_id}")
+            full_transcript_text = request.transcript
+            # We still need meeting title
+            meeting_data = await db.get_meeting(actual_meeting_id)
+            meeting_title = meeting_data.get("title", "Untitled Meeting") if meeting_data else "Untitled Meeting"
+        else:
+            # Fallback to fetching from DB
+            meeting_data = await db.get_meeting(actual_meeting_id)
+            if not meeting_data or not meeting_data.get("transcripts"):
+                raise HTTPException(
+                    status_code=404, detail="Meeting or transcripts not found."
+                )
 
-        transcripts = meeting_data["transcripts"]
-        full_transcript_text = "\n".join([t["text"] for t in transcripts])
+            transcripts = meeting_data["transcripts"]
+            # Default joining without speaker labels (historical behavior)
+            full_transcript_text = "\n".join([t["text"] for t in transcripts])
 
         if not full_transcript_text.strip():
             raise HTTPException(status_code=400, detail="Transcript text is empty.")
@@ -1498,11 +1508,16 @@ Guidelines:
 
         chat_service = ChatService(db)
 
-        async def generate_refinement():
-            # Implementation of streaming
-            yield "Refinement stream logic placeholder"
+        generator = await chat_service.refine_notes(
+            notes=request.current_notes,
+            instruction=request.user_instruction,
+            transcript_context=full_transcript,
+            model=request.model,
+            model_name=request.model_name,
+            user_email=current_user.email,
+        )
 
-        return StreamingResponse(generate_refinement(), media_type="text/plain")
+        return StreamingResponse(generator, media_type="text/plain")
 
     except Exception as e:
         logger.error(f"Error in refine_notes: {str(e)}", exc_info=True)

@@ -12,7 +12,7 @@ import AnalyticsProvider from '@/components/AnalyticsProvider'
 import { AuthProvider } from '@/components/AuthProvider'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { RecordingStateProvider } from '@/contexts/RecordingStateContext'
-import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
+// import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
 
 const sourceSans3 = Source_Sans_3({
   subsets: ['latin'],
@@ -37,21 +37,21 @@ export default function RootLayout({
           <AnalyticsProvider>
             <RecordingStateProvider>
               <SidebarProvider>
-                <OllamaDownloadProvider>
-                  <TooltipProvider>
-                    {/* <div className="titlebar h-8 w-full fixed top-0 left-0 bg-transparent" /> */}
-                    {isAuthPage ? (
-                      <div className="min-h-screen">
-                        {children}
-                      </div>
-                    ) : (
-                      <div className="flex">
-                        <Sidebar />
-                        <MainContent>{children}</MainContent>
-                      </div>
-                    )}
-                  </TooltipProvider>
-                </OllamaDownloadProvider>
+                {/* <OllamaDownloadProvider> */}
+                <TooltipProvider>
+                  {/* <div className="titlebar h-8 w-full fixed top-0 left-0 bg-transparent" /> */}
+                  {isAuthPage ? (
+                    <div className="min-h-screen">
+                      {children}
+                    </div>
+                  ) : (
+                    <div className="flex">
+                      <Sidebar />
+                      <MainContent>{children}</MainContent>
+                    </div>
+                  )}
+                </TooltipProvider>
+                {/* </OllamaDownloadProvider> */}
               </SidebarProvider>
             </RecordingStateProvider>
           </AnalyticsProvider>

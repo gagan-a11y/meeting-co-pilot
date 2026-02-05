@@ -89,7 +89,6 @@ Returns the generated notes when `status` is `"completed"`.
 ### Gemini API Key
 
 Set one of these environment variables:
-- `GOOGLE_API_KEY`
 - `GEMINI_API_KEY`
 
 Or configure via Settings → AI Model in the UI.

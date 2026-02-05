@@ -11,7 +11,7 @@ interface SummaryUpdaterButtonGroupProps {
   onSave: () => Promise<void>;
   onCopy: () => Promise<void>;
   onFind?: () => void;
-  onOpenFolder: () => Promise<void>;
+  onOpenFolder?: () => Promise<void>;
   onRefine?: () => void;
   hasSummary: boolean;
 }
@@ -84,19 +84,21 @@ export function SummaryUpdaterButtonGroup({
       </Button>
 
       {/* Recording folder button */}
-      <Button
-        variant="outline"
-        size="sm"
-        className="xl:px-4"
-        onClick={() => {
-          Analytics.trackButtonClick('open_recording_folder', 'meeting_details');
-          onOpenFolder();
-        }}
-        title="Open Recording Folder"
-      >
-        <FolderOpen className="xl:mr-2" size={18} />
-        <span className="hidden xl:inline">Recording</span>
-      </Button>
+      {onOpenFolder && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="xl:px-4"
+          onClick={() => {
+            Analytics.trackButtonClick('open_recording_folder', 'meeting_details');
+            onOpenFolder();
+          }}
+          title="Open Recording Folder"
+        >
+          <FolderOpen className="xl:mr-2" size={18} />
+          <span className="hidden xl:inline">Recording</span>
+        </Button>
+      )}
 
       {/* Find button */}
       {/* {onFind && (

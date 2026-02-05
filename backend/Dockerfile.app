@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     xz-utils \
     libpq-dev \
     gcc \
+    libc++1 \
     && rm -rf /var/lib/apt/lists/* \
     && curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz -o /tmp/ffmpeg.tar.xz \
     && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
@@ -51,10 +52,10 @@ RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 
 # Create entrypoint script to fix permissions at runtime
 RUN echo '#!/bin/bash\n\
-# Fix permissions for mounted data directory\n\
-chown -R appuser:appuser /app/data 2>/dev/null || true\n\
-# Switch to appuser and run the application\n\
-exec gosu appuser "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+    # Fix permissions for mounted data directory\n\
+    chown -R appuser:appuser /app/data 2>/dev/null || true\n\
+    # Switch to appuser and run the application\n\
+    exec gosu appuser "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Run the application via entrypoint
 ENTRYPOINT ["/entrypoint.sh"]

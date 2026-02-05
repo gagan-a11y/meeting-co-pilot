@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 from groq import AsyncGroq
 from anthropic import AsyncAnthropic
 import google.generativeai as genai
-from ollama import AsyncClient
+# from ollama import AsyncClient
 
 try:
     from ..db import DatabaseManager
@@ -121,7 +121,7 @@ Search Query:"""
                 return False  # Default to no search if we can't classify
 
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel("gemini-2.5-flash")
 
             classifier_prompt = f"""You are a classifier. Determine if this question requires REAL-TIME WEB SEARCH or can be answered from meeting context.
 
@@ -591,25 +591,26 @@ USER QUESTION: {question}
 
         try:
             # --- OLLAMA SUPPORT ---
-            if model == "ollama":
-                ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-                client = AsyncClient(host=ollama_host)
-                message = {"role": "user", "content": question}
-                system_message = {"role": "system", "content": system_prompt}
+            # --- OLLAMA SUPPORT ---
+            # if model == "ollama":
+            #     ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+            #     client = AsyncClient(host=ollama_host)
+            #     message = {"role": "user", "content": question}
+            #     system_message = {"role": "system", "content": system_prompt}
 
-                async def stream_ollama():
-                    async for part in await client.chat(
-                        model=model_name,
-                        messages=[system_message, message],
-                        stream=True,
-                    ):
-                        content = part["message"]["content"]
-                        yield content
+            #     async def stream_ollama():
+            #         async for part in await client.chat(
+            #             model=model_name,
+            #             messages=[system_message, message],
+            #             stream=True,
+            #         ):
+            #             content = part["message"]["content"]
+            #             yield content
 
-                return response_wrapper(stream_ollama())
+            #     return response_wrapper(stream_ollama())
 
             # --- GROQ SUPPORT ---
-            elif model == "groq":
+            if model == "groq":
                 api_key = await self.db.get_api_key("groq", user_email=user_email)
                 if not api_key:
                     api_key = os.getenv("GROQ_API_KEY")
@@ -733,3 +734,173 @@ USER QUESTION: {question}
         except Exception as e:
             logger.error(f"Error in chat_about_meeting: {e}", exc_info=True)
             raise e
+
+    async def stream_response(
+        self,
+        system_prompt: str,
+        user_query: str,
+        model: str,
+        model_name: str,
+        user_email: Optional[str] = None,
+    ):
+        """
+        Generic streaming response handler for different LLM providers.
+        """
+        try:
+            # --- OLLAMA SUPPORT ---
+            # --- OLLAMA SUPPORT ---
+            # if model == "ollama":
+            #     ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+            #     client = AsyncClient(host=ollama_host)
+            #     message = {"role": "user", "content": user_query}
+            #     system_message = {"role": "system", "content": system_prompt}
+
+            #     async def stream_ollama():
+            #         async for part in await client.chat(
+            #             model=model_name,
+            #             messages=[system_message, message],
+            #             stream=True,
+            #         ):
+            #             content = part["message"]["content"]
+            #             yield content
+
+            #     return stream_ollama()
+
+            # --- GROQ SUPPORT ---
+            if model == "groq":
+                api_key = await self.db.get_api_key("groq", user_email=user_email)
+                if not api_key:
+                    api_key = os.getenv("GROQ_API_KEY")
+                if not api_key:
+                    raise ValueError("Groq API key not found.")
+
+                client = AsyncGroq(api_key=api_key)
+                initial_stream = await client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_query},
+                    ],
+                    model=model_name,
+                    stream=True,
+                )
+
+                async def stream_groq(stream_iter):
+                    async for chunk in stream_iter:
+                        content = chunk.choices[0].delta.content or ""
+                        if content:
+                            yield content
+
+                return stream_groq(initial_stream)
+
+            # --- OPENAI SUPPORT ---
+            elif model == "openai":
+                api_key = await self.db.get_api_key("openai", user_email=user_email)
+                if not api_key:
+                    raise ValueError("OpenAI API key not found")
+
+                client = AsyncOpenAI(api_key=api_key)
+                initial_stream = await client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_query},
+                    ],
+                    model=model_name,
+                    stream=True,
+                )
+
+                async def stream_openai(stream_iter):
+                    async for chunk in stream_iter:
+                        content = chunk.choices[0].delta.content or ""
+                        if content:
+                            yield content
+
+                return stream_openai(initial_stream)
+
+            # --- CLAUDE SUPPORT ---
+            elif model == "claude":
+                api_key = await self.db.get_api_key("claude", user_email=user_email)
+                if not api_key:
+                    raise ValueError("Anthropic API key not found")
+
+                client = AsyncAnthropic(api_key=api_key)
+                initial_stream = await client.messages.create(
+                    max_tokens=4096,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_query}],
+                    model=model_name,
+                    stream=True,
+                )
+
+                async def stream_claude(stream_iter):
+                    async for text in stream_iter.text_stream:
+                        yield text
+
+                return stream_claude(initial_stream)
+
+            # --- GEMINI SUPPORT ---
+            elif model == "gemini":
+                api_key = await self.db.get_api_key("gemini", user_email=user_email)
+                if not api_key:
+                    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+                if not api_key:
+                    raise ValueError("Gemini API key not found")
+
+                genai.configure(api_key=api_key)
+                gen_model = genai.GenerativeModel(
+                    model_name=model_name,
+                    system_instruction=system_prompt,
+                )
+
+                response = await gen_model.generate_content_async(user_query, stream=True)
+
+                async def stream_gemini(response_iterator):
+                    async for chunk in response_iterator:
+                        if chunk.text:
+                            yield chunk.text
+
+                return stream_gemini(response)
+
+            else:
+                raise ValueError(f"Unsupported model: {model}")
+
+        except Exception as e:
+            logger.error(f"Error in stream_response: {e}", exc_info=True)
+            raise e
+
+    async def refine_notes(
+        self,
+        notes: str,
+        instruction: str,
+        transcript_context: str,
+        model: str,
+        model_name: str,
+        user_email: Optional[str] = None,
+    ):
+        """
+        Refine meeting notes based on user instruction and transcript context.
+        """
+        system_prompt = f"""You are an expert meeting notes editor.
+Your task is to REFINE the Current Meeting Notes based strictly on the User Instruction and the provided Context (Transcript).
+
+Context (Meeting Transcript):
+---
+{transcript_context[:30000]}
+---
+
+Guidelines:
+1. You MUST start your response with a detailed bulleted list of changes made.
+2. You MUST then output exactly: "|||SEPARATOR|||" (without quotes).
+3. After the separator, provide the FULL updated notes content.
+"""
+
+        user_query = f"""Current Meeting Notes:
+---
+{notes}
+---
+
+User Instruction: {instruction}
+"""
+
+        return await self.stream_response(
+            system_prompt, user_query, model, model_name, user_email
+        )
