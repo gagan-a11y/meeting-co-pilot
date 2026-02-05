@@ -57,53 +57,50 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
 
         diarization_service = get_diarization_service()
         storage_path = os.getenv("RECORDINGS_STORAGE_PATH", "./data/recordings")
+        storage_type = os.getenv("STORAGE_TYPE", "local").lower()
 
-        # 1. ENSURE AUDIO IS LOCAL
-        recording_dir = Path(storage_path) / meeting_id
-        recording_dir.mkdir(parents=True, exist_ok=True)
-        merged_wav = recording_dir / "merged_recording.wav"
-
-        if not merged_wav.exists():
-            logger.info(f"📉 Downloading audio for {meeting_id} from storage...")
-            downloaded = await StorageService.download_file(
-                f"{meeting_id}/recording.wav", str(merged_wav)
-            )
-            if downloaded:
-                logger.info(f"✅ Audio downloaded to {merged_wav}")
-            else:
-                logger.warning(
-                    "Download failed or file not in cloud. Checking local chunks..."
-                )
-
-        # 2. Get Audio Data
+        # 1. Get Audio URL (GCS) or local bytes
+        audio_url = None
         audio_data = None
-        if merged_wav.exists():
-            # Use aiofiles if available, or run_in_executor
-            import aiofiles
 
-            async with aiofiles.open(merged_wav, "rb") as af:
-                audio_data = await af.read()
-        else:
-            logger.info(f"🧩 Merging live audio chunks for {meeting_id}")
-            # Try basic merge first
-            audio_data = await AudioRecorder.merge_chunks(meeting_id, storage_path)
-
-            # If basic merge failed (e.g. metadata missing), try harder
-            if not audio_data:
-                logger.warning(
-                    f"Standard merge returned None, checking for raw chunks..."
-                )
-                chunk_dir = Path(storage_path) / meeting_id
-                if chunk_dir.exists() and list(chunk_dir.glob("chunk_*.pcm")):
-                    logger.info("Found orphan chunks, retrying merge...")
-                    audio_data = await AudioRecorder.merge_chunks(
-                        meeting_id, storage_path
-                    )
-
-        if not audio_data:
-            raise ValueError(
-                f"No audio data found for meeting {meeting_id} (Local or Cloud)"
+        if storage_type == "gcp":
+            logger.info(f"☁️ Using GCS audio for {meeting_id}")
+            audio_url = await StorageService.generate_signed_url(
+                f"{meeting_id}/recording.wav", 3600
             )
+            if not audio_url:
+                raise ValueError(
+                    f"Recording WAV not found in GCS for meeting {meeting_id}. "
+                    "Check that PCM chunks uploaded and merge service is configured."
+                )
+
+            # Groq high-fidelity transcription still needs bytes
+            audio_data = await StorageService.download_bytes(
+                f"{meeting_id}/recording.wav"
+            )
+            if not audio_data:
+                raise ValueError(
+                    f"Failed to download audio bytes from GCS for {meeting_id}"
+                )
+        else:
+            # Local mode fallback
+            recording_dir = Path(storage_path) / meeting_id
+            recording_dir.mkdir(parents=True, exist_ok=True)
+            merged_wav = recording_dir / "merged_recording.wav"
+
+            if merged_wav.exists():
+                import aiofiles
+
+                async with aiofiles.open(merged_wav, "rb") as af:
+                    audio_data = await af.read()
+            else:
+                logger.info(f"🧩 Merging live audio chunks for {meeting_id}")
+                audio_data = await AudioRecorder.merge_chunks(meeting_id, storage_path)
+
+            if not audio_data:
+                raise ValueError(
+                    f"No audio data found for meeting {meeting_id} (Local)"
+                )
 
         # CHECK CANCELLATION
         async with db._get_connection() as conn:
@@ -153,6 +150,7 @@ async def run_diarization_job(meeting_id: str, provider: str, user_email: str):
             storage_path=storage_path,
             provider=provider,
             audio_data=audio_data,
+            audio_url=audio_url,
             user_email=user_email,
         )
 

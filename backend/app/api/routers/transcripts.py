@@ -51,412 +51,87 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# --- Meeting Templates with Structured Prompts ---
+# --- Meeting Templates with Optimized Prompts ---
 def get_template_prompt(template_id: str) -> str:
     """
     Get the structured prompt for a specific meeting template.
-    Each template is optimized for high-quality, actionable notes.
+    Optimized for token efficiency while maintaining quality.
     """
     templates = {
-        "standard_meeting": """
-You are an expert meeting note-taker. Generate comprehensive, professional meeting notes from the transcript.
+        "standard_meeting": """Generate professional meeting notes as valid JSON:
 
-Your output MUST be valid JSON matching this exact structure:
 {
-  "MeetingName": "Brief descriptive title extracted from the meeting content",
-  "People": {
-    "title": "Participants",
-    "blocks": [
-      {"content": "Name - Role/Contribution (e.g., John Smith - Product Lead, presented roadmap)"}
-    ]
-  },
-  "SessionSummary": {
-    "title": "Executive Summary",
-    "blocks": [
-      {"content": "2-3 concise paragraphs covering: meeting purpose, key topics discussed, main outcomes"}
-    ]
-  },
-  "KeyItemsDecisions": {
-    "title": "Key Decisions",
-    "blocks": [
-      {"content": "Decision statement - Rationale - Owner/Date if mentioned"}
-    ]
-  },
-  "ImmediateActionItems": {
-    "title": "Action Items",
-    "blocks": [
-      {"content": "[Person] will [specific action] by [deadline] - Context/Dependencies"}
-    ]
-  },
-  "NextSteps": {
-    "title": "Next Steps & Follow-ups",
-    "blocks": [
-      {"content": "What needs to happen next - Timeline - Responsible parties"}
-    ]
-  },
-  "CriticalDeadlines": {
-    "title": "Important Deadlines",
-    "blocks": [
-      {"content": "[Date] - [Deliverable/Milestone] - Owner"}
-    ]
-  },
-  "MeetingNotes": {
-    "meeting_name": "Same as MeetingName above",
-    "sections": [
-      {
-        "title": "Discussion Topic Name",
-        "blocks": [
-          {"content": "Detailed discussion points, questions raised, concerns addressed"}
-        ]
-      }
-    ]
-  }
+  "MeetingName": "Descriptive title from content",
+  "People": {"title": "Participants", "blocks": [{"content": "Name - Role"}]},
+  "SessionSummary": {"title": "Executive Summary", "blocks": [{"content": "2-3 paragraphs: purpose, topics, outcomes"}]},
+  "KeyItemsDecisions": {"title": "Key Decisions", "blocks": [{"content": "Decision - Rationale - Owner/Date"}]},
+  "ImmediateActionItems": {"title": "Action Items", "blocks": [{"content": "[Person] will [action] by [deadline]"}]},
+  "NextSteps": {"title": "Next Steps", "blocks": [{"content": "What's next - Timeline - Owner"}]},
+  "CriticalDeadlines": {"title": "Deadlines", "blocks": [{"content": "[Date] - [Deliverable] - Owner"}]},
+  "MeetingNotes": {"meeting_name": "Same as MeetingName", "sections": [{"title": "Topic", "blocks": [{"content": "Details"}]}]}
 }
 
-CRITICAL GUIDELINES:
-1. Extract specific names, dates, and commitments - avoid generic statements
-2. Make action items SMART (Specific, Measurable, Assignable, Realistic, Time-bound)
-3. Capture both what was discussed AND what was decided
-4. Identify blockers, risks, and dependencies explicitly
-5. Use professional but concise language
-6. If information is missing (e.g., no deadlines mentioned), return empty blocks array []
-7. Organize MeetingNotes sections by topic/agenda item, not chronologically
+Rules: Extract names/dates/commitments. Make action items SMART. Capture discussions AND decisions. Flag blockers/risks. Be concise. Empty blocks [] if missing. Organize by topic.
 """,
-        "daily_standup": """
-You are an expert Agile/Scrum note-taker. Generate structured Daily Standup notes from the transcript.
+        "daily_standup": """Generate Daily Standup notes as valid JSON:
 
-Your output MUST be valid JSON matching this exact structure:
 {
-  "MeetingName": "Daily Standup - [Team Name] - [Date if mentioned]",
-  "People": {
-    "title": "Team Members Present",
-    "blocks": [
-      {"content": "Team member name - Role"}
-    ]
-  },
-  "SessionSummary": {
-    "title": "Standup Overview",
-    "blocks": [
-      {"content": "Brief summary of team progress, overall velocity, blockers trend"}
-    ]
-  },
-  "MeetingNotes": {
-    "meeting_name": "Same as MeetingName above",
-    "sections": [
-      {
-        "title": "[Person Name] - Updates",
-        "blocks": [
-          {"content": "✅ Completed: [Task] - Details"},
-          {"content": "🎯 Today's Focus: [Task] - Expected outcome"},
-          {"content": "🚧 Blockers: [Impediment] - Impact/Help needed"}
-        ]
-      }
-    ]
-  },
-  "KeyItemsDecisions": {
-    "title": "Decisions Made",
-    "blocks": [
-      {"content": "Decision about approach/priorities - Context"}
-    ]
-  },
-  "ImmediateActionItems": {
-    "title": "Follow-up Actions",
-    "blocks": [
-      {"content": "[Person] will [action to unblock/assist] - By when"}
-    ]
-  },
-  "CriticalDeadlines": {
-    "title": "Sprint Deadlines & Milestones",
-    "blocks": [
-      {"content": "[Date] - [Sprint milestone/Demo/Release]"}
-    ]
-  },
-  "NextSteps": {
-    "title": "Next Standup Preparation",
-    "blocks": [
-      {"content": "Items to track/follow-up in next standup"}
-    ]
-  }
+  "MeetingName": "Daily Standup - [Team] - [Date]",
+  "People": {"title": "Team Members", "blocks": [{"content": "Name - Role"}]},
+  "SessionSummary": {"title": "Overview", "blocks": [{"content": "Team progress, velocity, blockers"}]},
+  "MeetingNotes": {"meeting_name": "Same as MeetingName", "sections": [{"title": "[Person] - Updates", "blocks": [{"content": "✅ Done: [Task]"}, {"content": "🎯 Today: [Task]"}, {"content": "🚧 Blocked: [Issue]"}]}]},
+  "KeyItemsDecisions": {"title": "Decisions", "blocks": [{"content": "Decision - Context"}]},
+  "ImmediateActionItems": {"title": "Actions", "blocks": [{"content": "[Person] will [action] - By when"}]},
+  "CriticalDeadlines": {"title": "Sprint Deadlines", "blocks": [{"content": "[Date] - [Milestone]"}]},
+  "NextSteps": {"title": "Next Standup", "blocks": [{"content": "Items to track"}]}
 }
 
-CRITICAL GUIDELINES:
-1. Create one section per person in MeetingNotes
-2. Use consistent emoji indicators: ✅ completed, 🎯 in-progress/today, 🚧 blockers
-3. Extract specific task names and ticket IDs when mentioned
-4. Highlight cross-team dependencies and blockers needing management attention
-5. Identify patterns (e.g., recurring blockers, velocity concerns)
-6. Keep it concise - standups are meant to be brief
-7. Flag if anyone is stuck for multiple days on the same blocker
+Rules: One section per person. Use ✅ done, 🎯 today, 🚧 blocked. Extract task names/IDs. Highlight dependencies/blockers. Flag recurring issues. Keep brief.
 """,
-        "brainstorming": """
-You are an expert innovation facilitator. Generate structured Brainstorming Session notes from the transcript.
+        "brainstorming": """Generate Brainstorming notes as valid JSON:
 
-Your output MUST be valid JSON matching this exact structure:
 {
-  "MeetingName": "Brainstorming Session - [Topic/Problem Statement]",
-  "People": {
-    "title": "Session Participants",
-    "blocks": [
-      {"content": "Name - Role/Expertise relevant to session"}
-    ]
-  },
-  "SessionSummary": {
-    "title": "Session Overview",
-    "blocks": [
-      {"content": "Problem statement being addressed"},
-      {"content": "Brainstorming approach used (e.g., structured, freeform, SCAMPER)"},
-      {"content": "Number of ideas generated and selection process"}
-    ]
-  },
-  "MeetingNotes": {
-    "meeting_name": "Same as MeetingName above",
-    "sections": [
-      {
-        "title": "Ideas - [Theme/Category Name]",
-        "blocks": [
-          {"content": "💡 [Idea Title]: Description - Proposed by [Person] - Initial pros/cons"}
-        ]
-      },
-      {
-        "title": "Top Ideas (Selected for Further Exploration)",
-        "blocks": [
-          {"content": "⭐ [Idea Title]: Why selected - Next steps for validation"}
-        ]
-      },
-      {
-        "title": "Parked Ideas",
-        "blocks": [
-          {"content": "🅿️ [Idea Title]: Reason parked - Conditions for revisiting"}
-        ]
-      }
-    ]
-  },
-  "KeyItemsDecisions": {
-    "title": "Decisions Made",
-    "blocks": [
-      {"content": "Which ideas to pursue - Selection criteria - Timeline"}
-    ]
-  },
-  "ImmediateActionItems": {
-    "title": "Next Steps for Validation",
-    "blocks": [
-      {"content": "[Person] will [research/prototype/test] [specific idea] by [date]"}
-    ]
-  },
-  "CriticalDeadlines": {
-    "title": "Validation Deadlines",
-    "blocks": [
-      {"content": "[Date] - [Milestone like prototype/research complete] - Owner"}
-    ]
-  },
-  "NextSteps": {
-    "title": "Follow-up Sessions",
-    "blocks": [
-      {"content": "When to reconvene - What to prepare - Success criteria"}
-    ]
-  }
+  "MeetingName": "Brainstorming - [Topic]",
+  "People": {"title": "Participants", "blocks": [{"content": "Name - Expertise"}]},
+  "SessionSummary": {"title": "Overview", "blocks": [{"content": "Problem statement"}, {"content": "Approach used"}, {"content": "Ideas count & selection"}]},
+  "MeetingNotes": {"meeting_name": "Same as MeetingName", "sections": [{"title": "Ideas - [Theme]", "blocks": [{"content": "💡 [Title]: Description - By [Person] - Pros/cons"}]}, {"title": "Top Ideas", "blocks": [{"content": "⭐ [Title]: Why selected - Next steps"}]}, {"title": "Parked", "blocks": [{"content": "🅿️ [Title]: Reason - Revisit conditions"}]}]},
+  "KeyItemsDecisions": {"title": "Decisions", "blocks": [{"content": "Ideas to pursue - Criteria - Timeline"}]},
+  "ImmediateActionItems": {"title": "Validation", "blocks": [{"content": "[Person] will [test] [idea] by [date]"}]},
+  "CriticalDeadlines": {"title": "Validation Deadlines", "blocks": [{"content": "[Date] - [Milestone] - Owner"}]},
+  "NextSteps": {"title": "Follow-up", "blocks": [{"content": "Reconvene when - Prepare what"}]}
 }
 
-CRITICAL GUIDELINES:
-1. Group ideas by theme/category for easier review
-2. Capture the originator of each idea for attribution
-3. Document WHY ideas were selected or parked - criteria matter
-4. Note any constraints/assumptions discussed (budget, timeline, technical feasibility)
-5. Identify quick wins vs. long-term innovations
-6. Capture any voting results or consensus indicators
-7. Use emoji indicators: 💡 all ideas, ⭐ selected, 🅿️ parked
+Rules: Group by theme. Attribute ideas. Note WHY selected/parked. Document constraints. ID quick wins vs long-term. Use 💡 all, ⭐ selected, 🅿️ parked.
 """,
-        "interview": """
-You are an expert hiring manager and interviewer. Generate structured Interview Assessment notes from the transcript.
+        "interview": """Generate Interview Assessment as valid JSON:
 
-Your output MUST be valid JSON matching this exact structure:
 {
-  "MeetingName": "Interview - [Candidate Name] - [Position]",
-  "People": {
-    "title": "Interview Panel",
-    "blocks": [
-      {"content": "Interviewer Name - Role - Focus area"}
-    ]
-  },
-  "SessionSummary": {
-    "title": "Candidate Overview",
-    "blocks": [
-      {"content": "Candidate background summary - Current role, years of experience"},
-      {"content": "Interview format and areas covered"},
-      {"content": "Overall impression and recommendation (Hire/No Hire/Maybe)"}
-    ]
-  },
-  "MeetingNotes": {
-    "meeting_name": "Same as MeetingName above",
-    "sections": [
-      {
-        "title": "Technical Skills Assessment",
-        "blocks": [
-          {"content": "✅ Strength: [Skill] - Evidence from responses/examples"},
-          {"content": "⚠️ Concern: [Skill gap] - Specific example or missing knowledge"}
-        ]
-      },
-      {
-        "title": "Behavioral/Soft Skills Assessment",
-        "blocks": [
-          {"content": "✅ Strength: [Communication/Leadership/etc] - Specific examples"},
-          {"content": "⚠️ Concern: [Area] - Observable behaviors"}
-        ]
-      },
-      {
-        "title": "Cultural Fit & Values Alignment",
-        "blocks": [
-          {"content": "Assessment of fit with team values - Examples from conversation"}
-        ]
-      },
-      {
-        "title": "Questions Asked by Candidate",
-        "blocks": [
-          {"content": "Question asked - Quality/depth indicator"}
-        ]
-      }
-    ]
-  },
-  "KeyItemsDecisions": {
-    "title": "Assessment Summary",
-    "blocks": [
-      {"content": "Hire Recommendation: [Strong Yes/Yes/Maybe/No/Strong No] - Primary reasoning"},
-      {"content": "Salary expectations: [If discussed]"},
-      {"content": "Notice period: [If discussed]"}
-    ]
-  },
-  "ImmediateActionItems": {
-    "title": "Next Steps",
-    "blocks": [
-      {"content": "[Recruiter] will [schedule next round/send offer/notify] by [date]"},
-      {"content": "[If applicable] Additional assessments needed: [Skills test, references, etc.]"}
-    ]
-  },
-  "NextSteps": {
-    "title": "Follow-up Actions",
-    "blocks": [
-      {"content": "Reference checks - Who to contact"},
-      {"content": "Additional interview rounds needed - Focus areas"},
-      {"content": "Compensation discussion - Next steps"}
-    ]
-  },
-  "CriticalDeadlines": {
-    "title": "Timeline",
-    "blocks": [
-      {"content": "[Date] - Decision deadline (candidate has other offers, etc.)"}
-    ]
-  }
+  "MeetingName": "Interview - [Candidate] - [Position]",
+  "People": {"title": "Panel", "blocks": [{"content": "Name - Role - Focus"}]},
+  "SessionSummary": {"title": "Candidate Overview", "blocks": [{"content": "Background summary"}, {"content": "Format & areas"}, {"content": "Overall: Hire/No Hire/Maybe"}]},
+  "MeetingNotes": {"meeting_name": "Same as MeetingName", "sections": [{"title": "Technical Skills", "blocks": [{"content": "✅ Strength: [Skill] - Evidence"}, {"content": "⚠️ Gap: [Skill] - Example"}]}, {"title": "Behavioral", "blocks": [{"content": "✅ Strength: [Skill] - Examples"}, {"content": "⚠️ Concern: [Area] - Behaviors"}]}, {"title": "Cultural Fit", "blocks": [{"content": "Fit assessment - Examples"}]}, {"title": "Candidate Questions", "blocks": [{"content": "Question - Quality"}]}]},
+  "KeyItemsDecisions": {"title": "Assessment", "blocks": [{"content": "Recommendation: [Strong Yes/Yes/Maybe/No/Strong No] - Why"}, {"content": "Salary: [If discussed]"}, {"content": "Notice: [If discussed]"}]},
+  "ImmediateActionItems": {"title": "Next Steps", "blocks": [{"content": "[Recruiter] will [action] by [date]"}]},
+  "NextSteps": {"title": "Follow-up", "blocks": [{"content": "References - Who"}, {"content": "Additional rounds - Focus"}, {"content": "Comp discussion"}]},
+  "CriticalDeadlines": {"title": "Timeline", "blocks": [{"content": "[Date] - Decision deadline"}]}
 }
 
-CRITICAL GUIDELINES:
-1. Be objective - use specific examples, not just impressions
-2. Separate technical skills from soft skills assessments
-3. Note red flags clearly but professionally
-4. Capture candidate's questions - they reveal priorities and preparation
-5. Document compensation discussion factually
-6. Maintain confidentiality and professionalism in language
-7. Use ✅ for strengths, ⚠️ for concerns/gaps
-8. Include any unique candidate traits or standout moments
+Rules: Use specific examples not impressions. Separate technical/soft skills. Note red flags professionally. Capture candidate questions. Document comp factually. Use ✅ strengths, ⚠️ gaps.
 """,
-        "project_kickoff": """
-You are an expert project manager. Generate structured Project Kickoff meeting notes from the transcript.
+        "project_kickoff": """Generate Project Kickoff notes as valid JSON:
 
-Your output MUST be valid JSON matching this exact structure:
 {
-  "MeetingName": "Project Kickoff - [Project Name]",
-  "People": {
-    "title": "Project Team & Stakeholders",
-    "blocks": [
-      {"content": "Name - Role on project - Key responsibilities"}
-    ]
-  },
-  "SessionSummary": {
-    "title": "Project Overview",
-    "blocks": [
-      {"content": "Project vision and high-level goals"},
-      {"content": "Success criteria and key metrics"},
-      {"content": "Project constraints (budget, timeline, resources)"}
-    ]
-  },
-  "MeetingNotes": {
-    "meeting_name": "Same as MeetingName above",
-    "sections": [
-      {
-        "title": "Project Scope & Objectives",
-        "blocks": [
-          {"content": "✅ In Scope: [Deliverable/Feature] - Why included"},
-          {"content": "❌ Out of Scope: [Item] - Why excluded/deferred"}
-        ]
-      },
-      {
-        "title": "Roles & Responsibilities (RACI)",
-        "blocks": [
-          {"content": "[Person/Team] - Responsible for [area] - Accountable to [stakeholder]"}
-        ]
-      },
-      {
-        "title": "Timeline & Milestones",
-        "blocks": [
-          {"content": "[Date/Phase] - [Milestone] - Key deliverables"}
-        ]
-      },
-      {
-        "title": "Risks & Mitigation Strategies",
-        "blocks": [
-          {"content": "🚨 Risk: [Description] - Impact: [High/Med/Low] - Mitigation: [Strategy] - Owner"}
-        ]
-      },
-      {
-        "title": "Dependencies & Constraints",
-        "blocks": [
-          {"content": "Dependency on [team/system/resource] - Impact if delayed"}
-        ]
-      },
-      {
-        "title": "Communication Plan",
-        "blocks": [
-          {"content": "Meeting cadence - Who attends - Purpose"},
-          {"content": "Status reporting - Format - Frequency - Recipients"}
-        ]
-      }
-    ]
-  },
-  "KeyItemsDecisions": {
-    "title": "Key Decisions Made",
-    "blocks": [
-      {"content": "Decision about [approach/tool/priority] - Rationale - Alternatives considered"}
-    ]
-  },
-  "ImmediateActionItems": {
-    "title": "Immediate Next Steps",
-    "blocks": [
-      {"content": "[Person] will [action to get project started] by [date] - Dependencies"}
-    ]
-  },
-  "CriticalDeadlines": {
-    "title": "Critical Milestones & Deadlines",
-    "blocks": [
-      {"content": "[Date] - [Milestone] - Owner - Dependencies"}
-    ]
-  },
-  "NextSteps": {
-    "title": "Follow-up & Next Meetings",
-    "blocks": [
-      {"content": "Next project meeting: [Date] - Agenda items"},
-      {"content": "Documents to create: [Charter, Requirements, etc.] - Owner - Due date"}
-    ]
-  }
+  "MeetingName": "Project Kickoff - [Project]",
+  "People": {"title": "Team & Stakeholders", "blocks": [{"content": "Name - Role - Responsibilities"}]},
+  "SessionSummary": {"title": "Overview", "blocks": [{"content": "Vision & goals"}, {"content": "Success criteria & metrics"}, {"content": "Constraints (budget, timeline, resources)"}]},
+  "MeetingNotes": {"meeting_name": "Same as MeetingName", "sections": [{"title": "Scope", "blocks": [{"content": "✅ In: [Item] - Why"}, {"content": "❌ Out: [Item] - Why"}]}, {"title": "RACI", "blocks": [{"content": "[Person] - Responsible for [area] - Accountable to [who]"}]}, {"title": "Timeline", "blocks": [{"content": "[Date/Phase] - [Milestone] - Deliverables"}]}, {"title": "Risks", "blocks": [{"content": "🚨 [Risk] - Impact: H/M/L - Mitigation - Owner"}]}, {"title": "Dependencies", "blocks": [{"content": "Depends on [what] - Impact if delayed"}]}, {"title": "Communication", "blocks": [{"content": "Meeting cadence - Attendees - Purpose"}, {"content": "Status reports - Format - Frequency"}]}]},
+  "KeyItemsDecisions": {"title": "Decisions", "blocks": [{"content": "Decision on [what] - Rationale - Alternatives"}]},
+  "ImmediateActionItems": {"title": "Immediate Actions", "blocks": [{"content": "[Person] will [action] by [date]"}]},
+  "CriticalDeadlines": {"title": "Milestones", "blocks": [{"content": "[Date] - [Milestone] - Owner - Dependencies"}]},
+  "NextSteps": {"title": "Follow-up", "blocks": [{"content": "Next meeting: [Date] - Agenda"}, {"content": "Docs to create: [What] - Owner - Due"}]}
 }
 
-CRITICAL GUIDELINES:
-1. Clearly distinguish in-scope vs out-of-scope
-2. Make roles and responsibilities explicit - who is accountable vs consulted
-3. Identify and assess risks early - don't sugarcoat
-4. Capture success criteria and metrics explicitly
-5. Document decision rationale for future reference
-6. Use ✅ for in-scope, ❌ for out-of-scope, 🚨 for risks
-7. Flag dependencies that could become blockers
-8. Note communication preferences and escalation paths
+Rules: Clear in/out scope. Explicit roles. Assess risks early. Document decision rationale. Use ✅ in-scope, ❌ out, 🚨 risks. Flag dependencies.
 """,
     }
 

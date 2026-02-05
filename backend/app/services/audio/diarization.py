@@ -169,6 +169,7 @@ class DiarizationService:
         storage_path: str = "./data/recordings",
         provider: str = None,
         audio_data: bytes = None,
+        audio_url: str = None,
         user_email: str = None,
     ) -> DiarizationResult:
         """
@@ -221,8 +222,10 @@ class DiarizationService:
                 f"🎯 Starting diarization for meeting {meeting_id} with {provider}"
             )
 
-            # Step 1: Get Audio Data
-            if audio_data is None:
+            # Step 1: Get Audio Data (or URL)
+            if audio_url:
+                logger.info("📎 Using audio URL for diarization (no local download)")
+            elif audio_data is None:
                 # Try to find existing merged files first (Imported)
                 recording_dir = Path(storage_path) / meeting_id
                 merged_pcm = recording_dir / "merged_recording.pcm"
@@ -246,7 +249,7 @@ class DiarizationService:
                     )
 
             # If still no audio, check for any chunks and try harder
-            if not audio_data:
+            if not audio_data and not audio_url:
                 recording_dir = Path(storage_path) / meeting_id
                 if recording_dir.exists():
                     chunks = list(recording_dir.glob("chunk_*.pcm"))
@@ -258,7 +261,7 @@ class DiarizationService:
                             meeting_id, storage_path
                         )
 
-            if not audio_data:
+            if not audio_data and not audio_url:
                 return DiarizationResult(
                     status="failed",
                     meeting_id=meeting_id,
@@ -269,41 +272,28 @@ class DiarizationService:
                     error="No audio data found for this meeting. Ensure recording was enabled.",
                 )
 
-            # Step 2: Convert to WAV and SAVE for quality auditing
-            # Check if it's already WAV (RIFF header)
-            is_wav = audio_data.startswith(b"RIFF")
+            # Step 2: Convert to WAV (bytes path only)
+            wav_data = None
+            if audio_data:
+                is_wav = audio_data.startswith(b"RIFF")
 
-            if is_wav:
-                wav_data = audio_data
-                logger.info("📦 Audio is already WAV format")
-            else:
-                wav_data = AudioRecorder.convert_pcm_to_wav(audio_data)
-                logger.info("📦 Converted PCM to WAV")
+                if is_wav:
+                    wav_data = audio_data
+                    logger.info("📦 Audio is already WAV format")
+                else:
+                    wav_data = AudioRecorder.convert_pcm_to_wav(audio_data)
+                    logger.info("📦 Converted PCM to WAV")
 
-            audio_duration_seconds = len(wav_data) / (
-                16000 * 2
-            )  # Approx if PCM, not accurate for WAV header but ok for log
-
-            # Persist WAV to disk so user can listen to it (if not already there)
-            try:
-                wav_path = Path(storage_path) / meeting_id / "merged_recording.wav"
-                if not wav_path.exists():
-                    with open(wav_path, "wb") as f:
-                        f.write(wav_data)
-                    logger.info(f"💾 Saved merged WAV for auditing: {wav_path}")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to save WAV file (non-critical): {e}")
-
-            logger.info(f"📦 Audio prepared: {len(wav_data)} bytes")
+                logger.info(f"📦 Audio prepared: {len(wav_data)} bytes")
 
             # Step 3: Send to diarization API
             if provider == "deepgram":
                 segments = await self._diarize_with_deepgram(
-                    wav_data, meeting_id, api_key
+                    wav_data, meeting_id, api_key, audio_url=audio_url
                 )
             elif provider == "assemblyai":
                 segments = await self._diarize_with_assemblyai(
-                    wav_data, meeting_id, api_key
+                    wav_data, meeting_id, api_key, audio_url=audio_url
                 )
             else:
                 raise ValueError(f"Unknown provider: {provider}")
@@ -344,7 +334,11 @@ class DiarizationService:
             )
 
     async def _diarize_with_deepgram(
-        self, audio_data: bytes, meeting_id: str, api_key: str
+        self,
+        audio_data: Optional[bytes],
+        meeting_id: str,
+        api_key: str,
+        audio_url: Optional[str] = None,
     ) -> List[SpeakerSegment]:
         """
         Send audio to Deepgram for diarization.
@@ -363,10 +357,11 @@ class DiarizationService:
 
         # Determine content type based on header
         content_type = "audio/wav"
-        if audio_data.startswith(b"ID3") or audio_data.startswith(b"\xff\xfb"):
-            content_type = "audio/mp3"
-        elif audio_data.startswith(b"OggS"):
-            content_type = "audio/ogg"
+        if audio_data:
+            if audio_data.startswith(b"ID3") or audio_data.startswith(b"\xff\xfb"):
+                content_type = "audio/mp3"
+            elif audio_data.startswith(b"OggS"):
+                content_type = "audio/ogg"
 
         # Helper to create an IPv4-only transport (fixes Docker/network issues)
         def _get_transport_ipv4():
@@ -380,21 +375,38 @@ class DiarizationService:
                 async with httpx.AsyncClient(
                     timeout=300.0, transport=_get_transport_ipv4()
                 ) as client:
-                    response = await client.post(
-                        self.deepgram_url,
-                        headers={
-                            "Authorization": f"Token {api_key}",
-                            "Content-Type": content_type,
-                        },
-                        params={
-                            "model": "nova-2",
-                            "diarize": "true",
-                            "punctuate": "true",
-                            "utterances": "true",
-                            "smart_format": "false",
-                        },
-                        content=audio_data,
-                    )
+                    if audio_url:
+                        response = await client.post(
+                            self.deepgram_url,
+                            headers={
+                                "Authorization": f"Token {api_key}",
+                                "Content-Type": "application/json",
+                            },
+                            params={
+                                "model": "nova-2",
+                                "diarize": "true",
+                                "punctuate": "true",
+                                "utterances": "true",
+                                "smart_format": "false",
+                            },
+                            json={"url": audio_url},
+                        )
+                    else:
+                        response = await client.post(
+                            self.deepgram_url,
+                            headers={
+                                "Authorization": f"Token {api_key}",
+                                "Content-Type": content_type,
+                            },
+                            params={
+                                "model": "nova-2",
+                                "diarize": "true",
+                                "punctuate": "true",
+                                "utterances": "true",
+                                "smart_format": "false",
+                            },
+                            content=audio_data,
+                        )
 
                     if response.status_code != 200:
                         error_text = response.text
@@ -517,7 +529,11 @@ class DiarizationService:
         )
 
     async def _diarize_with_assemblyai(
-        self, audio_data: bytes, meeting_id: str, api_key: str
+        self,
+        audio_data: Optional[bytes],
+        meeting_id: str,
+        api_key: str,
+        audio_url: Optional[str] = None,
     ) -> List[SpeakerSegment]:
         """
         Send audio to AssemblyAI for diarization.
@@ -532,23 +548,24 @@ class DiarizationService:
             List of SpeakerSegment objects
         """
         async with httpx.AsyncClient(timeout=600.0) as client:
-            # Step 1: Upload audio file
-            upload_response = await client.post(
-                f"{self.assemblyai_url}/upload",
-                headers={
-                    "authorization": api_key,
-                    "content-type": "application/octet-stream",
-                },
-                content=audio_data,
-            )
-
-            if upload_response.status_code != 200:
-                raise Exception(
-                    f"AssemblyAI upload failed: {upload_response.status_code}"
+            if not audio_url:
+                # Step 1: Upload audio file
+                upload_response = await client.post(
+                    f"{self.assemblyai_url}/upload",
+                    headers={
+                        "authorization": api_key,
+                        "content-type": "application/octet-stream",
+                    },
+                    content=audio_data,
                 )
 
-            audio_url = upload_response.json().get("upload_url")
-            logger.info(f"Audio uploaded to AssemblyAI")
+                if upload_response.status_code != 200:
+                    raise Exception(
+                        f"AssemblyAI upload failed: {upload_response.status_code}"
+                    )
+
+                audio_url = upload_response.json().get("upload_url")
+                logger.info(f"Audio uploaded to AssemblyAI")
 
             # Step 2: Request transcription with diarization
             transcript_response = await client.post(

@@ -47,6 +47,7 @@ export default function PageContent({
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [currentTranscriptVersion, setCurrentTranscriptVersion] = useState<number | undefined>(undefined);
 
   // Sidebar context
   const { serverAddress } = useSidebar();
@@ -170,16 +171,19 @@ export default function PageContent({
   const [hasRefreshedForDiarization, setHasRefreshedForDiarization] = useState(false);
   useEffect(() => {
     if (diarization.status?.status === 'completed' && !hasRefreshedForDiarization) {
-      console.log('✅ Diarization completed, refreshing meeting data to show speaker labels...');
-      setHasRefreshedForDiarization(true);
-      if (onMeetingUpdated) {
-        onMeetingUpdated();
+      // Only auto-refresh when viewing live transcript to avoid overriding a selected version.
+      if (currentTranscriptVersion === undefined) {
+        console.log('✅ Diarization completed, refreshing meeting data to show speaker labels...');
+        setHasRefreshedForDiarization(true);
+        if (onMeetingUpdated) {
+          onMeetingUpdated();
+        }
       }
     } else if (diarization.status?.status !== 'completed' && hasRefreshedForDiarization) {
       // Reset if status changes back (e.g. re-running diarization)
       setHasRefreshedForDiarization(false);
     }
-  }, [diarization.status?.status, onMeetingUpdated, hasRefreshedForDiarization]);
+  }, [diarization.status?.status, onMeetingUpdated, hasRefreshedForDiarization, currentTranscriptVersion]);
 
   // Convert speakers array to map for easier lookup
   const speakerMap = (diarization.speakers || []).reduce((acc, s) => {
@@ -202,6 +206,8 @@ export default function PageContent({
           onCopyTranscript={copyOperations.handleCopyTranscript}
           onDownloadRecording={meetingOperations.handleDownloadRecording}
           isRecording={isRecording}
+          currentVersion={currentTranscriptVersion}
+          onCurrentVersionChange={setCurrentTranscriptVersion}
           onDiarize={diarization.triggerDiarization}
           onStopDiarize={diarization.stopDiarization}
           diarizationStatus={diarization.status?.status}

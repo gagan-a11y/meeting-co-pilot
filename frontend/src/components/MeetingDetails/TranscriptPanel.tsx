@@ -15,6 +15,8 @@ interface TranscriptPanelProps {
   onCopyTranscript: () => void;
   onDownloadRecording: () => Promise<void>;
   isRecording: boolean;
+  currentVersion: number | undefined;
+  onCurrentVersionChange: (version: number | undefined) => void;
   onDiarize?: () => void;
   onStopDiarize?: () => void; // NEW
   diarizationStatus?: string;
@@ -29,6 +31,8 @@ export function TranscriptPanel({
   onCopyTranscript,
   onDownloadRecording,
   isRecording,
+  currentVersion,
+  onCurrentVersionChange,
   onDiarize,
   onStopDiarize,
   diarizationStatus,
@@ -37,7 +41,6 @@ export function TranscriptPanel({
   meetingId,
   onTranscriptsUpdate
 }: TranscriptPanelProps) {
-  const [currentVersion, setCurrentVersion] = useState<number | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleVersionChange = async (versionNum: number) => {
@@ -53,7 +56,7 @@ export function TranscriptPanel({
         const data = await response.json();
         if (data.transcripts) {
           onTranscriptsUpdate(data.transcripts);
-          setCurrentVersion(undefined);
+          onCurrentVersionChange(undefined);
           toast.success('Switched to Live Transcript');
         }
         return;
@@ -67,7 +70,7 @@ export function TranscriptPanel({
       if (data.content) {
         // Map backend content to Transcript type if necessary, or assume it matches
         onTranscriptsUpdate(data.content);
-        setCurrentVersion(versionNum);
+        onCurrentVersionChange(versionNum);
         toast.success(`Switched to version ${versionNum}`);
       }
     } catch (error) {
@@ -134,7 +137,7 @@ export function TranscriptPanel({
           transcripts={transcripts} 
           speakerMap={speakerMap} 
           isRecording={isRecording}
-          forceShowSpeakers={diarizationStatus === 'completed' || currentVersion !== undefined}
+          forceShowSpeakers={currentVersion !== undefined}
         />
       </div>
     </div>

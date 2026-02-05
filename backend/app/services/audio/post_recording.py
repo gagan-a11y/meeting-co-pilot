@@ -43,6 +43,10 @@ class PostRecordingService:
         self.delete_local_after_upload = (
             os.getenv("DELETE_LOCAL_AFTER_UPLOAD", "true").lower() == "true"
         )
+        self.delete_pcm_after_merge = (
+            os.getenv("DELETE_PCM_AFTER_MERGE", "true").lower() == "true"
+        )
+        self.chunk_prefix = os.getenv("AUDIO_CHUNK_PREFIX", "pcm_chunks")
 
     async def finalize_recording(
         self,
@@ -75,7 +79,33 @@ class PostRecordingService:
         try:
             recording_dir = self.storage_path / meeting_id
 
-            # Check if recording directory exists
+            if self.storage_type == "gcp":
+                logger.info(f"☁️ GCP mode: merging PCM in backend for {meeting_id}")
+                merged = await self._merge_gcp_chunks_to_wav(meeting_id)
+                if not merged:
+                    result["status"] = "merge_failed"
+                    result["error"] = "Failed to merge PCM chunks in GCP"
+                    return result
+
+                result["uploaded_to_gcp"] = True
+                result["gcp_path"] = f"{meeting_id}/recording.wav"
+
+                if self.delete_pcm_after_merge:
+                    try:
+                        await self._cleanup_gcp_chunks(meeting_id)
+                        result["local_cleaned"] = True
+                    except Exception as e:
+                        logger.warning(f"Failed to delete PCM chunks in GCS: {e}")
+
+                result["status"] = "completed"
+                logger.info(f"✅ Post-recording (GCP) complete for {meeting_id}")
+
+                if trigger_diarization:
+                    asyncio.create_task(self._trigger_diarization(meeting_id, user_email))
+
+                return result
+
+            # Local mode: Check if recording directory exists
             if not recording_dir.exists():
                 result["status"] = "no_recording"
                 result["error"] = f"No recording found for meeting {meeting_id}"
@@ -167,6 +197,70 @@ class PostRecordingService:
             result["status"] = "error"
             result["error"] = str(e)
             return result
+
+    async def _merge_gcp_chunks_to_wav(self, meeting_id: str) -> bool:
+        """
+        Merge PCM chunks stored in GCS into a WAV file, upload to GCS.
+        No local disk usage; uses in-memory buffering.
+        """
+        try:
+            try:
+                from ..storage import StorageService
+            except (ImportError, ValueError):
+                from services.storage import StorageService
+
+            prefix = f"{meeting_id}/{self.chunk_prefix}/"
+            files = await StorageService.list_files(prefix)
+            chunk_files = sorted([f for f in files if f.endswith(".pcm")])
+
+            if not chunk_files:
+                logger.error(f"No PCM chunks found in GCS for {meeting_id}")
+                return False
+
+            import io
+            import wave
+
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(16000)
+
+                for blob_name in chunk_files:
+                    chunk = await StorageService.download_bytes(blob_name)
+                    if chunk:
+                        wav_file.writeframes(chunk)
+
+            wav_buffer.seek(0)
+            wav_bytes = wav_buffer.read()
+
+            uploaded = await StorageService.upload_bytes(
+                wav_bytes, f"{meeting_id}/recording.wav", content_type="audio/wav"
+            )
+            if not uploaded:
+                logger.error("Failed to upload merged WAV to GCS")
+                return False
+
+            logger.info(
+                f"✅ Uploaded merged WAV for {meeting_id} ({len(wav_bytes) / 1024 / 1024:.2f} MB)"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Merge PCM in backend failed: {e}", exc_info=True)
+            return False
+
+    async def _cleanup_gcp_chunks(self, meeting_id: str) -> bool:
+        try:
+            try:
+                from ..storage import StorageService
+            except (ImportError, ValueError):
+                from services.storage import StorageService
+
+            prefix = f"{meeting_id}/{self.chunk_prefix}/"
+            return await StorageService.delete_prefix(prefix)
+        except Exception as e:
+            logger.error(f"GCS cleanup failed: {e}")
+            return False
 
     async def _merge_chunks(self, meeting_id: str) -> Optional[bytes]:
         """Merge all PCM chunks for a meeting."""

@@ -36,6 +36,12 @@ services:
       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
       - TRANSCRIPTION_PROVIDER=${TRANSCRIPTION_PROVIDER:-groq}
+      - STORAGE_TYPE=${STORAGE_TYPE}
+      - GCP_BUCKET_NAME=${GCP_BUCKET_NAME}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcp-service-account.json}
+      - AUDIO_MERGE_SERVICE_URL=${AUDIO_MERGE_SERVICE_URL}
+      - DELETE_PCM_AFTER_MERGE=${DELETE_PCM_AFTER_MERGE:-true}
+      - AUDIO_CHUNK_PREFIX=${AUDIO_CHUNK_PREFIX:-pcm_chunks}
 
     # Add extra host for Docker Desktop compatibility
     extra_hosts:
@@ -46,6 +52,8 @@ services:
       # Local database directory (created by setup-db.sh)
       - ./data:/app/data
       - ./app:/app
+      # Optional: mount GCP service account
+      - ${GOOGLE_APPLICATION_CREDENTIALS_FILE:-./gcp-service-account.json}:/app/gcp-service-account.json:ro
       # Logs directory
       - meeting_app_logs:/app/logs
       # Optional: mount local .env file
@@ -94,6 +102,12 @@ services:
       - DATABASE_PATH=/app/data/meeting_minutes.db
       - DATABASE_URL=postgresql://neondb_owner:npg_3JYK7ySezjrT@ep-morning-truth-ahrz730e-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - STORAGE_TYPE=${STORAGE_TYPE}
+      - GCP_BUCKET_NAME=${GCP_BUCKET_NAME}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcp-service-account.json}
+      - AUDIO_MERGE_SERVICE_URL=${AUDIO_MERGE_SERVICE_URL}
+      - DELETE_PCM_AFTER_MERGE=${DELETE_PCM_AFTER_MERGE:-true}
+      - AUDIO_CHUNK_PREFIX=${AUDIO_CHUNK_PREFIX:-pcm_chunks}
 
     # Add extra host for Docker Desktop compatibility
     extra_hosts:
@@ -104,6 +118,8 @@ services:
       # Local database directory (created by setup-db.sh)
       - ./data:/app/data
       - ./app:/app
+      # Optional: mount GCP service account
+      - ${GOOGLE_APPLICATION_CREDENTIALS_FILE:-./gcp-service-account.json}:/app/gcp-service-account.json:ro
       # Logs directory
       - meeting_app_logs:/app/logs
       # Optional: mount local .env file

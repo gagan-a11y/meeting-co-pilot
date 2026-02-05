@@ -50,6 +50,8 @@ class AudioRecorder:
         """
         self.meeting_id = meeting_id
         self.storage_path = Path(storage_path) / meeting_id
+        self.storage_type = os.getenv("STORAGE_TYPE", "local").lower()
+        self.chunk_prefix = os.getenv("AUDIO_CHUNK_PREFIX", "pcm_chunks")
         self.chunk_duration_seconds = chunk_duration_seconds
 
         # Recording state
@@ -100,8 +102,23 @@ class AudioRecorder:
             return False
 
         try:
-            # Create storage directory
-            self.storage_path.mkdir(parents=True, exist_ok=True)
+            if self.storage_type == "gcp":
+                try:
+                    from ..storage import get_gcp_bucket
+                except (ImportError, ValueError):
+                    from services.storage import get_gcp_bucket
+
+                bucket = get_gcp_bucket()
+                if not bucket:
+                    logger.error(
+                        "GCS storage is enabled but bucket initialization failed. "
+                        "Check STORAGE_TYPE, GCP_BUCKET_NAME, and credentials."
+                    )
+                    return False
+
+            # Create storage directory for local mode only
+            if self.storage_type != "gcp":
+                self.storage_path.mkdir(parents=True, exist_ok=True)
 
             self.is_recording = True
             self.recording_start_time = time.time()
@@ -161,21 +178,35 @@ class AudioRecorder:
         async with self._lock:  # NEW: Serialize all saves to disk
             try:
                 chunk_filename = f"chunk_{self.chunk_index:05d}.pcm"
-                chunk_path = self.storage_path / chunk_filename
+                chunk_rel_path = f"{self.meeting_id}/{self.chunk_prefix}/{chunk_filename}"
 
                 # Calculate timing relative to meeting start
                 start_offset = chunk_start - self.recording_start_time
                 end_offset = chunk_end - self.recording_start_time
                 duration = len(data) / (self.sample_rate * self.bytes_per_sample)
 
-                # Save audio data asynchronously
-                async with aiofiles.open(chunk_path, "wb") as f:
-                    await f.write(data)
+                # Save audio data (GCS or local)
+                if self.storage_type == "gcp":
+                    try:
+                        from ..storage import StorageService
+                    except (ImportError, ValueError):
+                        from services.storage import StorageService
+
+                    success = await StorageService.upload_bytes(
+                        data, chunk_rel_path, content_type="application/octet-stream"
+                    )
+                    if not success:
+                        raise RuntimeError("Failed to upload chunk to GCS")
+                else:
+                    chunk_path = self.storage_path / chunk_filename
+                    async with aiofiles.open(chunk_path, "wb") as f:
+                        await f.write(data)
 
                 # Record metadata
                 metadata = {
                     "chunk_index": self.chunk_index,
                     "filename": chunk_filename,
+                    "storage_path": chunk_rel_path,
                     "start_time_seconds": start_offset,
                     "end_time_seconds": end_offset,
                     "duration_seconds": duration,
@@ -188,7 +219,7 @@ class AudioRecorder:
                     f"💾 Saved audio chunk {self.chunk_index} ({duration:.1f}s)"
                 )
                 self.chunk_index += 1
-                return str(chunk_path)
+                return chunk_rel_path
 
             except Exception as e:
                 logger.error(f"Failed to save audio chunk: {e}")
@@ -220,9 +251,6 @@ class AudioRecorder:
             if self.current_chunk_buffer:
                 await self._save_current_chunk()
 
-            # Save metadata file
-            metadata_path = self.storage_path / "metadata.json"
-
             recording_metadata = {
                 "meeting_id": self.meeting_id,
                 "recording_start": datetime.fromtimestamp(
@@ -247,8 +275,22 @@ class AudioRecorder:
 
             import json
 
-            async with aiofiles.open(metadata_path, "w") as f:
-                await f.write(json.dumps(recording_metadata, indent=2))
+            if self.storage_type == "gcp":
+                try:
+                    from ..storage import StorageService
+                except (ImportError, ValueError):
+                    from services.storage import StorageService
+
+                metadata_path = f"{self.meeting_id}/{self.chunk_prefix}/metadata.json"
+                await StorageService.upload_bytes(
+                    json.dumps(recording_metadata, indent=2).encode("utf-8"),
+                    metadata_path,
+                    content_type="application/json",
+                )
+            else:
+                metadata_path = self.storage_path / "metadata.json"
+                async with aiofiles.open(metadata_path, "w") as f:
+                    await f.write(json.dumps(recording_metadata, indent=2))
 
             logger.info(
                 f"🎙️ Audio recording stopped for meeting {self.meeting_id}: "
@@ -278,6 +320,35 @@ class AudioRecorder:
             Optional[bytes]: Merged audio data or None if failed
         """
         try:
+            storage_type = os.getenv("STORAGE_TYPE", "local").lower()
+            chunk_prefix = os.getenv("AUDIO_CHUNK_PREFIX", "pcm_chunks")
+
+            if storage_type == "gcp":
+                try:
+                    from ..storage import StorageService
+                except (ImportError, ValueError):
+                    from services.storage import StorageService
+
+                prefix = f"{meeting_id}/{chunk_prefix}/"
+                files = await StorageService.list_files(prefix)
+                chunk_files = sorted([f for f in files if f.endswith(".pcm")])
+
+                if not chunk_files:
+                    logger.error(f"No audio chunks found in GCS for {meeting_id}")
+                    return None
+
+                merged_audio = bytearray()
+                for blob_name in chunk_files:
+                    data = await StorageService.download_bytes(blob_name)
+                    if data:
+                        merged_audio.extend(data)
+
+                logger.info(
+                    f"Merged {len(chunk_files)} chunks from GCS "
+                    f"({len(merged_audio) / (16000 * 2):.1f}s of audio)"
+                )
+                return bytes(merged_audio)
+
             chunk_dir = Path(storage_path) / meeting_id
 
             if not chunk_dir.exists():
@@ -379,6 +450,33 @@ class AudioRecorder:
         Rename a recording directory (e.g. from session_id to meeting_id).
         """
         import shutil
+
+        storage_type = os.getenv("STORAGE_TYPE", "local").lower()
+
+        if storage_type == "gcp":
+            try:
+                try:
+                    from ..storage import StorageService
+                except (ImportError, ValueError):
+                    from services.storage import StorageService
+
+                old_prefix = f"{old_id}/"
+                new_prefix = f"{new_id}/"
+                files = await StorageService.list_files(old_prefix)
+
+                if not files:
+                    return False
+
+                for f in files:
+                    new_path = f.replace(old_prefix, new_prefix, 1)
+                    await StorageService.copy_file(f, new_path)
+
+                await StorageService.delete_prefix(old_prefix)
+                logger.info(f"☁️ Renamed GCS prefix: {old_id} -> {new_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Error renaming GCS prefix: {e}")
+                return False
 
         old_dir = Path(storage_path) / old_id
         new_dir = Path(storage_path) / new_id

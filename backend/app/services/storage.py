@@ -94,6 +94,20 @@ class StorageService:
             return await StorageService._save_locally(local_path, destination_path)
 
     @staticmethod
+    async def upload_bytes(
+        data: bytes, destination_path: str, content_type: str = "application/octet-stream"
+    ) -> bool:
+        """
+        Upload raw bytes to storage.
+        """
+        if STORAGE_TYPE == "gcp":
+            return await StorageService._upload_bytes_to_gcp(
+                data, destination_path, content_type
+            )
+        else:
+            return await StorageService._save_bytes_locally(data, destination_path)
+
+    @staticmethod
     async def download_file(source_path: str, local_destination: str) -> bool:
         """
         Download a file from storage to local path.
@@ -106,12 +120,46 @@ class StorageService:
             return await StorageService._copy_locally(source_path, local_destination)
 
     @staticmethod
+    async def download_bytes(source_path: str) -> Optional[bytes]:
+        """
+        Download a file from storage into memory.
+        """
+        if STORAGE_TYPE == "gcp":
+            return await StorageService._download_bytes_from_gcp(source_path)
+        else:
+            return await StorageService._read_local_bytes(source_path)
+
+    @staticmethod
     async def delete_file(path: str) -> bool:
         """Delete a file from storage."""
         if STORAGE_TYPE == "gcp":
             return await StorageService._delete_from_gcp(path)
         else:
             return await StorageService._delete_locally(path)
+
+    @staticmethod
+    async def list_files(prefix: str) -> list:
+        """List files under a prefix."""
+        if STORAGE_TYPE == "gcp":
+            return await StorageService._list_gcp_files(prefix)
+        else:
+            return await StorageService._list_local_files(prefix)
+
+    @staticmethod
+    async def copy_file(source_path: str, destination_path: str) -> bool:
+        """Copy a file within storage."""
+        if STORAGE_TYPE == "gcp":
+            return await StorageService._copy_gcp_file(source_path, destination_path)
+        else:
+            return await StorageService._copy_local_file(source_path, destination_path)
+
+    @staticmethod
+    async def delete_prefix(prefix: str) -> bool:
+        """Delete all files under a prefix."""
+        if STORAGE_TYPE == "gcp":
+            return await StorageService._delete_gcp_prefix(prefix)
+        else:
+            return await StorageService._delete_local_prefix(prefix)
 
     @staticmethod
     async def generate_signed_url(
@@ -186,6 +234,30 @@ class StorageService:
             return False
 
     @staticmethod
+    async def _upload_bytes_to_gcp(
+        data: bytes, blob_name: str, content_type: str
+    ) -> bool:
+        try:
+            bucket = get_gcp_bucket()
+            if not bucket:
+                return False
+
+            blob = bucket.blob(blob_name)
+
+            import asyncio
+
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, lambda: blob.upload_from_string(data, content_type=content_type)
+            )
+
+            logger.info(f"⬆️  Uploaded bytes to GCS: gs://{GCP_BUCKET_NAME}/{blob_name}")
+            return True
+        except Exception as e:
+            logger.error(f"GCS Upload bytes failed: {e}")
+            return False
+
+    @staticmethod
     async def _download_from_gcp(blob_name: str, local_path: str) -> bool:
         try:
             bucket = get_gcp_bucket()
@@ -210,6 +282,23 @@ class StorageService:
             return False
 
     @staticmethod
+    async def _download_bytes_from_gcp(blob_name: str) -> Optional[bytes]:
+        try:
+            bucket = get_gcp_bucket()
+            if not bucket:
+                return None
+
+            blob = bucket.blob(blob_name)
+
+            import asyncio
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, blob.download_as_bytes)
+        except Exception as e:
+            logger.error(f"GCS Download bytes failed: {e}")
+            return None
+
+    @staticmethod
     async def _delete_from_gcp(blob_name: str) -> bool:
         try:
             bucket = get_gcp_bucket()
@@ -227,6 +316,68 @@ class StorageService:
             return True
         except Exception as e:
             logger.warning(f"GCS Delete failed (might not exist): {e}")
+            return False
+
+    @staticmethod
+    async def _list_gcp_files(prefix: str) -> list:
+        try:
+            bucket = get_gcp_bucket()
+            if not bucket:
+                return []
+
+            import asyncio
+
+            loop = asyncio.get_running_loop()
+
+            def _list():
+                return [blob.name for blob in bucket.list_blobs(prefix=prefix)]
+
+            return await loop.run_in_executor(None, _list)
+        except Exception as e:
+            logger.error(f"GCS list failed: {e}")
+            return []
+
+    @staticmethod
+    async def _copy_gcp_file(source_path: str, destination_path: str) -> bool:
+        try:
+            bucket = get_gcp_bucket()
+            if not bucket:
+                return False
+
+            import asyncio
+
+            loop = asyncio.get_running_loop()
+
+            def _copy():
+                source_blob = bucket.blob(source_path)
+                bucket.copy_blob(source_blob, bucket, destination_path)
+
+            await loop.run_in_executor(None, _copy)
+            return True
+        except Exception as e:
+            logger.error(f"GCS copy failed: {e}")
+            return False
+
+    @staticmethod
+    async def _delete_gcp_prefix(prefix: str) -> bool:
+        try:
+            bucket = get_gcp_bucket()
+            if not bucket:
+                return False
+
+            import asyncio
+
+            loop = asyncio.get_running_loop()
+
+            def _delete_all():
+                blobs = list(bucket.list_blobs(prefix=prefix))
+                for blob in blobs:
+                    blob.delete()
+
+            await loop.run_in_executor(None, _delete_all)
+            return True
+        except Exception as e:
+            logger.error(f"GCS delete prefix failed: {e}")
             return False
 
     @staticmethod
@@ -277,6 +428,23 @@ class StorageService:
             return False
 
     @staticmethod
+    async def _save_bytes_locally(data: bytes, relative_dest: str) -> bool:
+        try:
+            base_path = Path("./data/recordings")
+            dest_path = base_path / relative_dest
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+            import aiofiles
+
+            async with aiofiles.open(dest_path, "wb") as f:
+                await f.write(data)
+
+            return True
+        except Exception as e:
+            logger.error(f"Local save bytes failed: {e}")
+            return False
+
+    @staticmethod
     async def _copy_locally(relative_source: str, local_dest: str) -> bool:
         try:
             base_path = Path("./data/recordings")
@@ -293,6 +461,22 @@ class StorageService:
             return False
 
     @staticmethod
+    async def _read_local_bytes(relative_source: str) -> Optional[bytes]:
+        try:
+            base_path = Path("./data/recordings")
+            source_path = base_path / relative_source
+            if not source_path.exists():
+                return None
+
+            import aiofiles
+
+            async with aiofiles.open(source_path, "rb") as f:
+                return await f.read()
+        except Exception as e:
+            logger.error(f"Local read bytes failed: {e}")
+            return None
+
+    @staticmethod
     async def _delete_locally(relative_path: str) -> bool:
         try:
             base_path = Path("./data/recordings")
@@ -304,4 +488,69 @@ class StorageService:
             return False
         except Exception as e:
             logger.error(f"Local delete failed: {e}")
+            return False
+
+    @staticmethod
+    async def _list_local_files(prefix: str) -> list:
+        try:
+            base_path = Path("./data/recordings")
+            target_path = base_path / prefix
+            if target_path.is_file():
+                return [str(target_path.relative_to(base_path))]
+            if not target_path.exists():
+                return []
+
+            files = []
+            for path in target_path.rglob("*"):
+                if path.is_file():
+                    files.append(str(path.relative_to(base_path)))
+            return files
+        except Exception as e:
+            logger.error(f"Local list failed: {e}")
+            return []
+
+    @staticmethod
+    async def _copy_local_file(relative_source: str, relative_dest: str) -> bool:
+        try:
+            base_path = Path("./data/recordings")
+            source_path = base_path / relative_source
+            dest_path = base_path / relative_dest
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if not source_path.exists():
+                return False
+
+            shutil.copy2(source_path, dest_path)
+            return True
+        except Exception as e:
+            logger.error(f"Local copy failed: {e}")
+            return False
+
+    @staticmethod
+    async def _delete_local_prefix(prefix: str) -> bool:
+        try:
+            base_path = Path("./data/recordings")
+            target_path = base_path / prefix
+            if not target_path.exists():
+                return True
+
+            if target_path.is_file():
+                target_path.unlink()
+                return True
+
+            for path in target_path.rglob("*"):
+                if path.is_file():
+                    path.unlink()
+
+            # Clean up empty dirs
+            for path in sorted(target_path.rglob("*"), reverse=True):
+                if path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
+
+            if target_path.is_dir() and not any(target_path.iterdir()):
+                target_path.rmdir()
+
+            return True
+        except Exception as e:
+            logger.error(f"Local delete prefix failed: {e}")
             return False
