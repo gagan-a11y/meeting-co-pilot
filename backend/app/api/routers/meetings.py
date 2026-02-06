@@ -127,17 +127,19 @@ async def delete_meeting(
 
 
 @router.get("/list-meetings")
-async def list_meetings():
-    """List all available meetings with basic metadata."""
+async def list_meetings(current_user: User = Depends(get_current_user)):
+    """List meetings visible to the current user with basic metadata."""
     try:
+        accessible_ids = await rbac.get_accessible_meetings(current_user)
         meetings = await db.get_all_meetings()
+        visible_meetings = [m for m in meetings if m["id"] in accessible_ids]
         return [
             {
                 "id": m["id"],
                 "title": m["title"],
                 "date": m["created_at"],  # get_all_meetings returns 'created_at'
             }
-            for m in meetings
+            for m in visible_meetings
         ]
     except Exception as e:
         logger.error(f"Error listing meetings: {str(e)}")

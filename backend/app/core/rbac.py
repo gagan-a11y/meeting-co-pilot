@@ -19,7 +19,7 @@ class RBAC:
         """
         Central Policy Check: Can `user` perform `action` on `meeting_id`?
 
-        PERMISSIVE MODE ENABLED: Any authenticated user has full access.
+        Default policy: Only meeting owner (or explicitly permitted user) has access.
         """
         if not user or not user.email:
             return False
@@ -28,21 +28,74 @@ class RBAC:
         if meeting_id == "current-recording" and action == "ai_interact":
             return True
 
-        # In permissive mode, we trust authenticated users
+        try:
+            async with self.db._get_connection() as conn:
+                row = await conn.fetchrow(
+                    "SELECT owner_id FROM meetings WHERE id = $1", meeting_id
+                )
+                if row and row.get("owner_id") == user.email:
+                    return True
+
+                # Optional: check meeting_permissions table if it exists
+                try:
+                    perm = await conn.fetchrow(
+                        """
+                        SELECT 1
+                        FROM meeting_permissions
+                        WHERE meeting_id = $1 AND user_id = $2
+                        LIMIT 1
+                        """,
+                        meeting_id,
+                        user.email,
+                    )
+                    if perm:
+                        return True
+                except Exception as e:
+                    # Table may not exist; keep private by default
+                    logger.debug(
+                        f"RBAC: meeting_permissions check skipped: {e}", exc_info=True
+                    )
+        except Exception as e:
+            logger.error(f"RBAC: Error checking permissions: {e}", exc_info=True)
+            return False
+
         logger.info(
-            f"RBAC Permissive Check: Allowing {user.email} to {action} {meeting_id}"
+            f"RBAC Deny: {user.email} cannot {action} meeting {meeting_id}"
         )
-        return True
+        return False
 
     async def get_accessible_meetings(self, user: User):
         """
         Return a list of meeting_ids the user can access.
 
-        PERMISSIVE MODE ENABLED: Returns ALL meetings.
+        Default policy: Return meetings owned by user or explicitly shared.
         """
-        # Return all meeting IDs so the user sees everything
-        async with self.db._get_connection() as conn:
-            rows = await conn.fetch("SELECT id FROM meetings")
-            accessible_ids = [r["id"] for r in rows]
+        if not user or not user.email:
+            return []
 
-        return accessible_ids
+        async with self.db._get_connection() as conn:
+            accessible_ids = set()
+
+            # Owner access
+            rows = await conn.fetch(
+                "SELECT id FROM meetings WHERE owner_id = $1", user.email
+            )
+            accessible_ids.update([r["id"] for r in rows])
+
+            # Optional: shared access
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT meeting_id
+                    FROM meeting_permissions
+                    WHERE user_id = $1
+                    """,
+                    user.email,
+                )
+                accessible_ids.update([r["meeting_id"] for r in rows])
+            except Exception as e:
+                logger.debug(
+                    f"RBAC: meeting_permissions list skipped: {e}", exc_info=True
+                )
+
+        return list(accessible_ids)

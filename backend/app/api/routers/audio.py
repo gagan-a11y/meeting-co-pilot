@@ -28,6 +28,7 @@ try:
     from ...core.rbac import RBAC
     from ...services.audio.manager import StreamingTranscriptionManager
     from ...services.audio.recorder import get_or_create_recorder, stop_recorder
+    from ...services.audio.post_recording import get_post_recording_service
     from ...services.storage import StorageService
 except (ImportError, ValueError):
     from api.deps import get_current_user
@@ -36,6 +37,7 @@ except (ImportError, ValueError):
     from core.rbac import RBAC
     from services.audio.manager import StreamingTranscriptionManager
     from services.audio.recorder import get_or_create_recorder, stop_recorder
+    from services.audio.post_recording import get_post_recording_service
     from services.storage import StorageService
 
 db = DatabaseManager()
@@ -104,27 +106,44 @@ async def websocket_streaming_audio(
                 f"[Streaming] Failed to start audio recorder: {e}", exc_info=True
             )
 
-    if not is_resume:
-        groq_api_key = (
-            await db.get_user_api_key(user_email, "groq") if user_email else None
-        )
-        if not groq_api_key:
-            logger.warning(
-                f"[Streaming] No personal Groq API key for user: {user_email}"
+        if not is_resume:
+            groq_api_key = (
+                await db.get_user_api_key(user_email, "groq") if user_email else None
             )
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "code": "GROQ_KEY_REQUIRED",
-                    "message": "Groq API key required. Please add your Groq API key in Settings → Personal Keys.",
-                }
-            )
-            await websocket.close()
-            return
+            if not groq_api_key:
+                logger.warning(
+                    f"[Streaming] No personal Groq API key for user: {user_email}"
+                )
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "code": "GROQ_KEY_REQUIRED",
+                        "message": "Groq API key required. Please add your Groq API key in Settings → Personal Keys.",
+                    }
+                )
+                await websocket.close()
+                return
 
-        manager = StreamingTranscriptionManager(groq_api_key)
-        streaming_managers[session_id] = manager
-        logger.info(f"[Streaming] ✅ Session {session_id} started (HYBRID mode)")
+            # Ensure meeting exists in DB for RBAC visibility
+            try:
+                # Use provided meeting_id or fallback to session_id
+                # If meeting_id was provided, it might already exist, but save_meeting handles upsert/ignore
+                active_id = meeting_id or session_id
+                await db.save_meeting(
+                    meeting_id=active_id,
+                    title=f"Live Meeting {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+                    owner_id=user_email if user_email else "anonymous",
+                    workspace_id="default",
+                )
+                logger.info(
+                    f"[Streaming] Ensured meeting record exists for {active_id}"
+                )
+            except Exception as e:
+                logger.error(f"[Streaming] Failed to create meeting record: {e}")
+
+            manager = StreamingTranscriptionManager(groq_api_key)
+            streaming_managers[session_id] = manager
+            logger.info(f"[Streaming] ✅ Session {session_id} started (HYBRID mode)")
 
     # Register active connection
     if session_id not in active_connections:
@@ -335,6 +354,22 @@ async def websocket_streaming_audio(
             try:
                 recorder_key = meeting_id or session_id
                 await stop_recorder(recorder_key)
+                try:
+                    post_service = get_post_recording_service()
+                    asyncio.create_task(
+                        post_service.finalize_recording(
+                            recorder_key,
+                            trigger_diarization=False,
+                            user_email=user_email,
+                        )
+                    )
+                    logger.info(
+                        f"[Streaming] Scheduled post-recording processing for {recorder_key}"
+                    )
+                except Exception as post_e:
+                    logger.warning(
+                        f"[Streaming] Post-recording service unavailable: {post_e}"
+                    )
             except:
                 pass
 
