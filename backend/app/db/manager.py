@@ -598,7 +598,9 @@ class DatabaseManager:
                 return content_json
             return None
 
-    async def delete_transcript_version(self, meeting_id: str, version_num: int) -> bool:
+    async def delete_transcript_version(
+        self, meeting_id: str, version_num: int
+    ) -> bool:
         """Delete a specific transcript version snapshot."""
         try:
             async with self._get_connection() as conn:
@@ -1131,43 +1133,67 @@ class DatabaseManager:
                 f"UPDATE settings SET \"{column_name}\" = NULL WHERE id = '1'"
             )
 
-    async def update_meeting_summary(self, meeting_id: str, summary: dict):
-        """Update a meeting's summary"""
+    async def create_feedback(
+        self,
+        feedback_id: str,
+        user_id: str,
+        user_email: str,
+        type: str,
+        title: str,
+        description: str,
+    ):
+        """Create new feedback entry"""
+        async with self._get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO feedback (id, user_id, user_email, type, title, description)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+                feedback_id,
+                user_id,
+                user_email,
+                type,
+                title,
+                description,
+            )
+
+    async def get_feedback(self, user_id: Optional[str] = None):
+        """Get all feedback or filter by user_id"""
+        async with self._get_connection() as conn:
+            if user_id:
+                rows = await conn.fetch(
+                    "SELECT * FROM feedback WHERE user_id = $1 ORDER BY created_at DESC",
+                    user_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT * FROM feedback ORDER BY created_at DESC"
+                )
+
+            # Format datetime objects to strings
+            results = []
+            for row in rows:
+                item = dict(row)
+                item["created_at"] = (
+                    item["created_at"].isoformat() if item["created_at"] else None
+                )
+                item["updated_at"] = (
+                    item["updated_at"].isoformat() if item["updated_at"] else None
+                )
+                results.append(item)
+            return results
+
+    async def update_feedback_status(self, feedback_id: str, status: str):
+        """Update status of a feedback item"""
         now = datetime.utcnow()
-        try:
-            async with self._get_connection() as conn:
-                async with conn.transaction():
-                    # Check existence
-                    exists = await conn.fetchval(
-                        "SELECT id FROM meetings WHERE id = $1", meeting_id
-                    )
-                    if not exists:
-                        raise ValueError(f"Meeting with ID {meeting_id} not found")
-
-                    # Update summary_processes
-                    await conn.execute(
-                        """
-                        UPDATE summary_processes
-                        SET result = $1, updated_at = $2
-                        WHERE meeting_id = $3
-                    """,
-                        json.dumps(summary),
-                        now,
-                        meeting_id,
-                    )
-
-                    # Update meetings timestamp
-                    await conn.execute(
-                        """
-                        UPDATE meetings
-                        SET updated_at = $1
-                        WHERE id = $2
-                    """,
-                        now,
-                        meeting_id,
-                    )
-
-                    return True
-        except Exception as e:
-            logger.error(f"Error updating meeting summary: {str(e)}")
-            raise
+        async with self._get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE feedback 
+                SET status = $1, updated_at = $2 
+                WHERE id = $3
+            """,
+                status,
+                now,
+                feedback_id,
+            )

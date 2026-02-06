@@ -43,9 +43,13 @@ class FileProcessor:
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         RECORDING_DIR.mkdir(parents=True, exist_ok=True)
 
-    async def process_file(self, meeting_id: str, file_path: Path, title: str):
+    async def process_file(
+        self, meeting_id: str, file_path: Path, title: str, file_ext: str = ""
+    ):
         """
         Background task to process an uploaded file.
+        file_path: Local temporary path where the file is currently stored.
+                   It is expected to be a temp file and will be cleaned up after processing.
         """
         try:
             logger.info(
@@ -55,7 +59,21 @@ class FileProcessor:
             # Update status to processing (Need to implement in DB or assume implicit)
 
             # 1. Convert to standardized PCM (16kHz, Mono, s16le)
+            # This generates a local temp file
             pcm_path = await self._convert_to_pcm(file_path, meeting_id)
+
+            # 2. Upload PCM to Storage (GCP/Local)
+            if pcm_path:
+                try:
+                    # Upload "merged_recording.pcm"
+                    from .storage import StorageService  # Import inside to avoid circle
+
+                    await StorageService.upload_file(
+                        str(pcm_path), f"{meeting_id}/merged_recording.pcm"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to upload PCM to storage: {e}")
+
             if not pcm_path:
                 logger.error(f"❌ Audio conversion failed for {meeting_id}")
                 return
@@ -116,6 +134,17 @@ class FileProcessor:
                     source="upload",
                 )
 
+            # Save full transcript text as well
+            if full_text:
+                await self.db.save_transcript(
+                    meeting_id=meeting_id,
+                    transcript_text=full_text,
+                    model="groq-whisper",
+                    model_name="whisper-large-v3",
+                    chunk_size=0,
+                    overlap=0,
+                )
+
             # 4. Diarization (Optional but recommended)
             if self.diarization_service.enabled:
                 logger.info(f"👥 Starting diarization for {meeting_id}...")
@@ -125,6 +154,20 @@ class FileProcessor:
                 # Or reuse the original file if supported?
                 # Deepgram supports WAV. Let's create a WAV for it.
                 wav_path = await self._create_wav_from_pcm(pcm_path, meeting_id)
+
+                # Upload WAV to storage as well
+                if wav_path:
+                    try:
+                        from .storage import StorageService
+
+                        await StorageService.upload_file(
+                            str(wav_path), f"{meeting_id}/recording.wav"
+                        )
+                        await StorageService.upload_file(
+                            str(wav_path), f"{meeting_id}/merged_recording.wav"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to upload WAV to storage: {e}")
 
                 # The service expects a path where "merged_recording.wav" might exist or we pass data
                 # Actually diarize_meeting merges chunks. We should bypass that and call _diarize_with_provider directly?
@@ -169,6 +212,13 @@ class FileProcessor:
                         f"⚠️ Diarization failed or skipped: {diarization_result.error}"
                     )
 
+                # Cleanup WAV path
+                if wav_path and wav_path.exists():
+                    try:
+                        os.unlink(wav_path)
+                    except:
+                        pass
+
             # 5. Generate Summary
             logger.info(f"🧠 Generating summary for {meeting_id}...")
             # Trigger summary generation logic here if needed
@@ -179,6 +229,30 @@ class FileProcessor:
             logger.error(
                 f"❌ Fatal error processing file for {meeting_id}: {e}", exc_info=True
             )
+        finally:
+            # Cleanup source file (it was a temp file passed from upload)
+            try:
+                if file_path.exists():
+                    os.unlink(file_path)
+                    logger.debug(f"Cleaned up temp file: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp file {file_path}: {e}")
+
+            # Cleanup PCM path
+            try:
+                # pcm_path is defined in local scope if success
+                if "pcm_path" in locals() and pcm_path and pcm_path.exists():
+                    os.unlink(pcm_path)
+            except Exception as e:
+                pass
+
+            # Remove the recording dir if empty (since we uploaded everything)
+            try:
+                rec_dir = RECORDING_DIR / meeting_id
+                if rec_dir.exists() and not any(rec_dir.iterdir()):
+                    rec_dir.rmdir()
+            except:
+                pass
 
     async def _convert_to_pcm(
         self, input_path: Path, meeting_id: str

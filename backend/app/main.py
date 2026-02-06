@@ -25,6 +25,7 @@ try:
         diarization,
         settings,
         admin,
+        feedback,
     )
 except ImportError:
     from api.routers import (
@@ -35,6 +36,7 @@ except ImportError:
         diarization,
         settings,
         admin,
+        feedback,
     )
 
 app = FastAPI(
@@ -68,6 +70,7 @@ app.include_router(audio.router, tags=["Audio"])
 app.include_router(diarization.router, tags=["Diarization"])
 app.include_router(settings.router, tags=["Settings"])
 app.include_router(admin.router, tags=["Admin"])
+app.include_router(feedback.router, prefix="/feedback", tags=["Feedback"])
 
 
 @app.get("/health")

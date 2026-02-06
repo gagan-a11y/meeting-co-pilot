@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, LogOut, Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, LogOut, Upload, MessageSquare } from 'lucide-react';
 import { signOut } from 'next-auth/react';
 import { authFetch } from '@/lib/api';
 import { useRouter, usePathname } from 'next/navigation';
@@ -496,6 +496,21 @@ const Sidebar: React.FC = () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                onClick={() => router.push('/feedback')}
+                className={`p-2 rounded-lg transition-colors duration-150 ${pathname === '/feedback' ? 'bg-gray-100' : 'hover:bg-gray-100'
+                  }`}
+              >
+                <MessageSquare className="w-5 h-5 text-gray-600" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <p>Feedback</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
                 onClick={() => signOut()}
                 className="p-2 rounded-lg transition-colors duration-150 hover:bg-red-50 group"
               >
@@ -776,6 +791,14 @@ const Sidebar: React.FC = () => {
             >
               <Settings className="w-4 h-4 mr-2" />
               <span>Settings</span>
+            </button>
+
+            <button
+              onClick={() => router.push('/feedback')}
+              className="w-full flex items-center justify-center px-3 py-1.5 mt-1 mb-1 text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors shadow-sm"
+            >
+              <MessageSquare className="w-4 h-4 mr-2" />
+              <span>Feedback</span>
             </button>
             <button
               onClick={() => signOut()}

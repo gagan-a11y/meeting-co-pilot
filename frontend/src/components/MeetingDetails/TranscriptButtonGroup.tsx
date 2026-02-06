@@ -84,7 +84,7 @@ export function TranscriptButtonGroup({
           title="Download Audio File"
         >
           <Download className="h-4 w-4 lg:mr-2" />
-          <span className="hidden lg:inline">Download</span>
+          <span className="hidden lg:inline">Download Recording</span>
         </Button>
       </ButtonGroup>
     </div>

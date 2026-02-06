@@ -385,6 +385,10 @@ async def websocket_streaming_audio(
                 del active_connections[session_id]
 
 
+import tempfile
+import shutil
+
+
 @router.post("/upload-meeting-recording")
 async def upload_meeting_recording(
     background_tasks: BackgroundTasks,
@@ -394,6 +398,7 @@ async def upload_meeting_recording(
 ):
     """
     Upload and process an audio/video file as a new meeting.
+    Directly uploads to Cloud Storage (if configured) and processes in background.
     """
     meeting_id = str(uuid.uuid4())
     meeting_title = title or file.filename or "Untitled Import"
@@ -406,25 +411,35 @@ async def upload_meeting_recording(
         workspace_id="default",
     )
 
-    # 2. Save file temporarily
+    # 2. Save file temporarily for upload
     original_filename = file.filename or "uploaded_file"
     file_ext = os.path.splitext(original_filename)[1]
     if not file_ext:
         file_ext = ".bin"
 
-    upload_dir = Path("./data/uploads") / meeting_id
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / f"original{file_ext}"
-
-    try:
-        async with aiofiles.open(file_path, "wb") as out_file:
+    # Create a temp file in /tmp (or system temp)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+        temp_path = Path(tmp.name)
+        async with aiofiles.open(temp_path, "wb") as out_file:
             while content := await file.read(1024 * 1024):
                 await out_file.write(content)
-    except Exception as e:
-        logger.error(f"Failed to save uploaded file: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
-    # 3. Trigger processing
+    # 3. Upload to Storage (GCP/Local)
+    destination_path = f"{meeting_id}/original{file_ext}"
+    try:
+        success = await StorageService.upload_file(str(temp_path), destination_path)
+        if not success:
+            raise Exception("Storage upload failed")
+    except Exception as e:
+        logger.error(f"Failed to upload file to storage: {e}")
+        # Clean up temp file
+        if temp_path.exists():
+            os.unlink(temp_path)
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+    # 4. Trigger processing (Background Task)
+    # We pass the temp_path so processing can use it (optimization),
+    # but we also flag that it's already in storage.
     try:
         try:
             from ...services.file_processing import get_file_processor
@@ -432,11 +447,21 @@ async def upload_meeting_recording(
             from services.file_processing import get_file_processor
 
         processor = get_file_processor(db)
+
+        # We pass the storage path/info to the processor
+        # The processor will be responsible for cleaning up the temp file if passed
         background_tasks.add_task(
-            processor.process_file, meeting_id, file_path, meeting_title
+            processor.process_file,
+            meeting_id,
+            temp_path,  # Pass local cached copy for speed
+            meeting_title,
+            file_ext,  # Pass extension to help identify file type
         )
     except ImportError as e:
         logger.error(f"file_processing module import failed: {e}")
+        # Attempt to clean up if we fail to schedule task
+        if temp_path.exists():
+            os.unlink(temp_path)
         raise HTTPException(status_code=500, detail="Processing service unavailable")
 
     return {
