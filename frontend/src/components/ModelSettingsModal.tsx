@@ -379,7 +379,6 @@ export function ModelSettingsModal({
         : null,
     };
     setModelConfig(updatedConfig);
-    console.log('ModelSettingsModal - handleSave - Updated ModelConfig:', updatedConfig);
 
     // Save auto-generate setting
     // try {

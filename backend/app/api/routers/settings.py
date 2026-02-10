@@ -29,14 +29,30 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def mask_key(key: Optional[str]) -> Optional[str]:
+    """Mask an API key for safe display in UI"""
+    if not key:
+        return None
+    if key.startswith("****"):
+        return key
+    return "****************"  # Fixed masked placeholder
+
+
 @router.post("/save-model-config")
 async def save_model_config(
     request: SaveModelConfigRequest, current_user: User = Depends(get_current_user)
 ):
     """Save the model configuration"""
     await db.save_model_config(request.provider, request.model, request.whisperModel)
-    if request.apiKey != None:
-        await db.save_api_key(request.apiKey, request.provider)
+    if request.apiKey is not None:
+        # Don't save if it's just the masked placeholder
+        if request.apiKey == "****************":
+            logger.info(f"Skipping save for masked API key (provider: {request.provider})")
+        else:
+            # Save as personal key for isolation
+            await db.save_user_api_key(
+                current_user.email, request.provider, request.apiKey
+            )
     return {"status": "success", "message": "Model configuration saved successfully"}
 
 
@@ -46,10 +62,8 @@ async def get_model_config(current_user: User = Depends(get_current_user)):
     config = await db.get_model_config()
     if config:
         # HOTFIX: Migrate users away from retired gemini-1.5 models
-        if config.get("model", "") == "gemini-1.5-flash" or config.get("model", "") == "gemini-1.5-pro":
-            logger.info(
-                f"Migrating retired model {config['model']} to gemini-2.5-flash"
-            )
+        if config.get("model", "") in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+            logger.info(f"Migrating retired model {config['model']} to gemini-2.5-flash")
             config["model"] = "gemini-2.5-flash"
             await db.save_model_config(
                 config["provider"],
@@ -60,12 +74,12 @@ async def get_model_config(current_user: User = Depends(get_current_user)):
         # Check if user has a personal API key for the provider
         user_key = await db.get_user_api_key(current_user.email, config["provider"])
         if user_key:
-            config["apiKey"] = user_key
+            config["apiKey"] = mask_key(user_key)
         else:
             # Fallback to system key
             system_key = await db.get_api_key(config["provider"])
             if system_key:
-                config["apiKey"] = system_key
+                config["apiKey"] = mask_key(system_key)
             else:
                 # Fallback to Env Var check to satisfy frontend validation
                 import os
@@ -82,7 +96,7 @@ async def get_model_config(current_user: User = Depends(get_current_user)):
                     env_key = os.getenv("ANTHROPIC_API_KEY")
 
                 if env_key:
-                    config["apiKey"] = "****************"  # Masked placeholder
+                    config["apiKey"] = mask_key("EXISTS")
 
     return config
 
@@ -95,17 +109,26 @@ async def get_transcript_config(current_user: User = Depends(get_current_user)):
         transcript_api_key = await db.get_transcript_api_key(
             transcript_config["provider"], user_email=current_user.email
         )
-        if transcript_api_key != None:
-            transcript_config["apiKey"] = transcript_api_key
+        if transcript_api_key:
+            transcript_config["apiKey"] = mask_key(transcript_api_key)
     return transcript_config
 
 
 @router.post("/save-transcript-config")
-async def save_transcript_config(request: SaveTranscriptConfigRequest):
+async def save_transcript_config(
+    request: SaveTranscriptConfigRequest, current_user: User = Depends(get_current_user)
+):
     """Save the transcript configuration"""
     await db.save_transcript_config(request.provider, request.model)
-    if request.apiKey != None:
-        await db.save_transcript_api_key(request.apiKey, request.provider)
+    if request.apiKey is not None:
+        if request.apiKey == "****************":
+            logger.info(
+                f"Skipping save for masked transcript API key (provider: {request.provider})"
+            )
+        else:
+            await db.save_user_api_key(
+                current_user.email, request.provider, request.apiKey
+            )
     return {
         "status": "success",
         "message": "Transcript configuration saved successfully",

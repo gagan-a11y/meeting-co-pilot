@@ -38,7 +38,6 @@ export default function SettingsPage() {
         if (response.ok) {
           const config = await response.json();
           if (config) {
-            console.log('Loaded saved transcript config:', config);
             setTranscriptModelConfig({
               provider: config.provider || 'localWhisper',
               model: config.model || 'large-v3',
