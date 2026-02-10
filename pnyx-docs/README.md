@@ -20,6 +20,7 @@ Development timeline, implementation plans, and status reports.
 *   **[Phase 6](./roadmap/PHASE_6.md)** - Import Recording (Completed)
 *   **[Phase 7](./roadmap/PHASE_7.md)** - Context-Aware Chatbot (In Progress)
 *   **[Phase 8](./roadmap/PHASE_8.md)** - Polish & Production (Planned)
+*   **[Phase 9](./roadmap/PHASE_9.md)** - Calendar Integration & Workflow Automation (Planned)
 *   **[Future Optimizations](./roadmap/FUTURE_OPTIMIZATIONS.md)**
 
 ### 2. Architecture & Design (`/architecture`)

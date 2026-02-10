@@ -138,6 +138,8 @@ Use existing models (Whisper, Ollama, Claude). No fine-tuning or custom model de
 
 ---
 
+---
+
 ## 3. Functional Requirements: Fork-Based Approach
 
 **Key**:

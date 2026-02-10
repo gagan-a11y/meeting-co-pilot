@@ -42,7 +42,8 @@ Our current architecture is **highly cost-optimized** by leveraging local embedd
 
 | Provider | Cost | Notes |
 | :--- | :--- | :--- |
-| **Brave Search** | **$3.00 / 1k** | **Recommended.** Cheapest paid option. |
+| **Brave Search** | **$3.00–$5.00 / 1k** | **Recommended.** Pricing appears inconsistent between Brave's public page and dashboard; confirm actual rate in the Brave API dashboard before selecting. |
+| **Gemini Grounding (Google Search)** | **~$35.00 / 1k grounded prompts** | **If using Gemini Grounding** for search. Billed per grounded prompt; confirm latest pricing before rollout. |
 | **Tavily (Pro)** | $29.00 / mo | 2,500 searches. Good for complex agents. |
 
 ---
@@ -110,9 +111,12 @@ We analyzed the codebase to calculate exact token loads per feature.
 4.  **Pyannote (Future Optimization):** If Deepgram becomes too expensive at scale ($0.26/hr), implement a self-hosted Pyannote service (on a cheap GPU) + Groq. This would cut the upload cost from $0.27/hr to ~$0.14/hr (50% savings), though it adds operational complexity.
 
 
-use of celery for better retries in upload audio
-calender integration
-share meeting to calender users
-audio encryption
-better prompts
-user persona / journey
+<!-- 
+1). use of celery for better retries in upload audio
+2). calender integration
+3). share meeting to calender users
+4). audio encryption
+5). better prompts
+6). user persona / journey 
+
+-->
