@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 import logging
+from typing import Optional
 
 try:
     from ..deps import get_current_user
