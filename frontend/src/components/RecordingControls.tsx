@@ -9,6 +9,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import Analytics from '@/lib/analytics';
 import { wsUrl } from '@/lib/config';
 import { AudioStreamClient } from '@/lib/audio-streaming/AudioStreamClient';
+import { GroqApiKeyDialog } from './GroqApiKeyDialog';
+import { authFetch } from '@/lib/api';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -50,6 +52,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const [isStopping, setIsStopping] = useState(false);
   const [deviceError, setDeviceError] = useState<{ title: string, message: string } | null>(null);
   const [sessionError, setSessionError] = useState<boolean>(false);
+  const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const { data: session } = useSession();
 
   // Real-time streaming audio client
@@ -135,10 +138,9 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
           // Handle GROQ_KEY_REQUIRED specifically
           if (code === 'GROQ_KEY_REQUIRED') {
-            setDeviceError({
-              title: 'Groq API Key Required',
-              message: 'Please add your Groq API key in Settings → Personal Keys to use transcription.'
-            });
+            setShowApiKeyDialog(true);
+            // Don't show the error alert, as the dialog will handle it
+            return; 
           }
 
           onTranscriptionError?.(error.message, code);
@@ -238,8 +240,42 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     }
   }, [isPaused, onPauseChange]);
 
+  const handleSaveApiKey = async (apiKey: string) => {
+    try {
+      const response = await authFetch('/api/user/keys', {
+        method: 'POST',
+        body: JSON.stringify({
+          provider: 'groq',
+          api_key: apiKey,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to save API key');
+      }
+
+      // Success
+      console.log('✅ Groq API key saved successfully');
+      
+      // Retry starting recording
+      setTimeout(() => {
+        handleStartRecording();
+      }, 500); // Small delay to ensure DB update propagates if needed
+      
+    } catch (error) {
+      console.error('Failed to save API key:', error);
+      throw error; // Re-throw to be caught by the dialog
+    }
+  };
+
   return (
     <TooltipProvider>
+      <GroqApiKeyDialog 
+        isOpen={showApiKeyDialog} 
+        onClose={() => setShowApiKeyDialog(false)} 
+        onSave={handleSaveApiKey}
+      />
       <div className="flex flex-col space-y-2">
         <div className="flex items-center space-x-2 bg-white rounded-full shadow-lg px-4 py-2">
           {isProcessing && !isParentProcessing ? (
