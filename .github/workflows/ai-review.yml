@@ -1,5 +1,4 @@
 name: AI Code Review
-
 on:
   pull_request:
     types: [opened, synchronize]
@@ -12,22 +11,12 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Your Code
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Checkout AI Reviewer Action
-        uses: actions/checkout@v4
-        with:
-          repository: tegveer-work/ai-code-reviewer # YOUR repo
-          token: ${{ secrets.ACTION_ACCESS_TOKEN }} # The PAT you created
-          path: .github/actions/ai-reviewer
-          ref: main
-
       - name: Run AI Reviewer
-        uses: ./.github/actions/ai-reviewer
-        with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          allowed_domain: "appointy.com"
+        uses: tegveer-work/ai-code-reviewer@main 
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
